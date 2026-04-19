@@ -607,6 +607,7 @@ function connectWs() {
   ws = new WebSocket(`${proto}://${location.host}/ws`);
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
+    console.log("WS message received:", msg.type, msg);
     if (msg.type === 'state') updateTelemetry(msg.data);
     else if (msg.type === 'svg_loaded') applySvgPayload(msg.data);
     else if (msg.type === 'pen_swap') showSwapModal(msg.data);
@@ -889,7 +890,11 @@ dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.
   if (e.dataTransfer.files.length) handleFileUpload(e.dataTransfer.files); });
 
 function applySvgPayload(d) {
-  if (!d || !d.preview) return;
+  console.log("applySvgPayload executing with data:", d);
+  if (!d || !d.preview) {
+    console.error("applySvgPayload aborted: missing 'preview' in data");
+    return;
+  }
   svgLoaded = true;
   previewData = d.preview;
   showSvgPreview(d.preview);
@@ -962,6 +967,7 @@ function showSvgStats(d) {
 }
 
 function showSvgPreview(data) {
+  console.log("showSvgPreview executing with data:", data);
   const svg = document.getElementById('svg-preview');
   const pad = 2;
   svg.setAttribute('viewBox', `${data.min_x-pad} ${data.min_y-pad} ${data.max_x-data.min_x+pad*2} ${data.max_y-data.min_y+pad*2}`);
@@ -1079,6 +1085,17 @@ async function setAsMask() {
     toast('Mask applied to ' + targetLayer, 'success');
   }
   selRegion = null;
+}
+
+function setLayerMaskFromUI(layerName) {
+  const tool = document.getElementById('mask-tool-' + layerName).value;
+  setSelTool(tool);
+  document.getElementById('target-layer-select').value = layerName;
+  if (!selRegion) {
+    toast(`Please draw a ${tool} on the preview first`, 'error');
+    return;
+  }
+  setAsMask();
 }
 
 async function svgUndo() {
@@ -1334,8 +1351,9 @@ function toast(msg, type='info') {
         `Tray: (${cfg.tray_x_mm}, ${cfg.tray_y_mm})` +
         (cfg.water_dish_x_mm != null ? ` | Water: (${cfg.water_dish_x_mm}, ${cfg.water_dish_y_mm})` : '');
     }
-    if (cfg.last_model) {
-      document.getElementById('s-model').value = cfg.last_model;
+    if (cfg.last_model !== undefined) {
+      document.getElementById('s-model').value = String(cfg.last_model);
+      updateBedDisplay(cfg.last_model);
     }
   }
   const lastProfile = cfg?.last_profile || 'Default';
