@@ -1006,8 +1006,14 @@ function buildLayerList(layers) {
     row.innerHTML = `
       <input type="checkbox" ${l.enabled?'checked':''} onchange="toggleLayer('${l.name}',this.checked)">
       <div class="layer-swatch" style="background:${l.color}"></div>
-      <span class="layer-name">${l.name}</span>
-      <span class="layer-info">${l.path_count} paths, ${l.distance_mm} mm</span>`;
+      <span class="layer-name" style="flex:1;">${l.name}</span>
+      <span class="layer-info">${l.path_count} paths, ${l.distance_mm} mm</span>
+      <select id="mask-tool-${l.name}" style="font-size:0.7rem; padding: 2px 4px; margin-left: 8px;" onchange="setSelTool(this.value)">
+        <option value="rect">Rect</option>
+        <option value="circle">Circle</option>
+        <option value="lasso">Lasso</option>
+      </select>
+      <button onclick="setLayerMaskFromUI('${l.name}')" style="font-size:0.7rem; padding: 2px 6px;">Set Mask</button>`;
     el.appendChild(row);
   });
 }
