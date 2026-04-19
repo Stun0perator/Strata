@@ -450,6 +450,7 @@ async def upload_svg(file: UploadFile = File(...)):
         return JSONResponse({"error": f"Could not save file: {e}"}, 500)
     try:
         svg_data = svg_proc.load(str(filepath))
+        logger.info(f"Loaded SVG: {svg_data.total_paths()} paths, bounds {svg_data.min_x}, {svg_data.min_y} to {svg_data.max_x}, {svg_data.max_y}")
     except ValueError as e:
         logger.warning("SVG upload: load_svg failed for %s: %s", filepath, e)
         return JSONResponse({"error": str(e)}, 400)
@@ -467,15 +468,14 @@ async def upload_svg(file: UploadFile = File(...)):
     est_time = round(svg_proc.estimate_time_seconds(speed, travel), 1)
 
     state.update(current_file=safe)
-    await broadcast_message(
-        "svg_loaded",
-        {
-            "preview": preview,
-            "estimated_dips": est_dips,
-            "estimated_time_s": est_time,
-            "filename": safe,
-        },
-    )
+    msg_data = {
+        "preview": preview,
+        "estimated_dips": est_dips,
+        "estimated_time_s": est_time,
+        "filename": safe,
+    }
+    logger.info(f"Broadcasting svg_loaded message. Preview keys: {list(preview.keys())}")
+    await broadcast_message("svg_loaded", msg_data)
     await broadcast_state()
 
     return {
@@ -530,15 +530,14 @@ async def load_file(request: Request):
     est_time = round(svg_proc.estimate_time_seconds(speed, travel), 1)
 
     state.update(current_file=filename)
-    await broadcast_message(
-        "svg_loaded",
-        {
-            "preview": preview,
-            "estimated_dips": est_dips,
-            "estimated_time_s": est_time,
-            "filename": filename,
-        },
-    )
+    msg_data = {
+        "preview": preview,
+        "estimated_dips": est_dips,
+        "estimated_time_s": est_time,
+        "filename": filename,
+    }
+    logger.info(f"Broadcasting svg_loaded message. Preview keys: {list(preview.keys())}")
+    await broadcast_message("svg_loaded", msg_data)
     await broadcast_state()
 
     return {

@@ -913,8 +913,8 @@ async function handleFileUpload(files) {
     const r = await fetch('/api/svg/upload', {method:'POST', body:form});
     const d = await r.json();
     if (d.error) { toast(d.error,'error'); return; }
-    applySvgPayload(d);
-    toast('SVG loaded: '+d.preview.filename,'success');
+    // applySvgPayload(d); // REMOVED to prevent double execution (WebSocket sends it too)
+    toast('SVG uploaded successfully','success');
     loadFiles(); // refresh file list after upload
   } catch(e) { toast('Upload failed','error'); }
 }
@@ -940,7 +940,11 @@ async function loadFiles() {
   }
 }
 
+let isLoadingFile = false;
 async function loadFile(filename) {
+  if (isLoadingFile) return;
+  isLoadingFile = true;
+  toast('Loading ' + filename + '...', 'info');
   try {
     const r = await fetch('/api/files/load', {
       method: 'POST',
@@ -948,11 +952,15 @@ async function loadFile(filename) {
       body: JSON.stringify({filename})
     });
     const d = await r.json();
-    if (d.error) { toast(d.error, 'error'); return; }
-    applySvgPayload(d);
+    if (d.error) { toast(d.error, 'error'); isLoadingFile = false; return; }
+    // We do NOT need to call applySvgPayload(d) here because the backend broadcasts svg_loaded which calls it!
+    // If we call it here, it executes twice and breaks state.
+    // applySvgPayload(d); // REMOVED!
     toast('SVG loaded: ' + d.preview.filename, 'success');
   } catch (e) {
     toast('Failed to load file', 'error');
+  } finally {
+    isLoadingFile = false;
   }
 }
 
@@ -970,18 +978,56 @@ function showSvgPreview(data) {
   console.log("showSvgPreview executing with data:", data);
   const svg = document.getElementById('svg-preview');
   const pad = 2;
-  svg.setAttribute('viewBox', `${data.min_x-pad} ${data.min_y-pad} ${data.max_x-data.min_x+pad*2} ${data.max_y-data.min_y+pad*2}`);
-  let html = `<rect x="${data.min_x-pad}" y="${data.min_y-pad}" width="${data.max_x-data.min_x+pad*2}" height="${data.max_y-data.min_y+pad*2}" fill="#1c2333"/>`;
-  html += `<rect x="${data.min_x}" y="${data.min_y}" width="${data.max_x-data.min_x}" height="${data.max_y-data.min_y}" fill="none" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="2"/>`;
+  const minX = data.min_x - pad;
+  const minY = data.min_y - pad;
+  const w = data.max_x - data.min_x + pad * 2;
+  const h = data.max_y - data.min_y + pad * 2;
+  
+  svg.setAttribute('viewBox', `${minX} ${minY} ${w} ${h}`);
+  
+  while (svg.firstChild) {
+    svg.removeChild(svg.firstChild);
+  }
+
+  const ns = "http://www.w3.org/2000/svg";
+
+  const bg = document.createElementNS(ns, 'rect');
+  bg.setAttribute('x', minX);
+  bg.setAttribute('y', minY);
+  bg.setAttribute('width', w);
+  bg.setAttribute('height', h);
+  bg.setAttribute('fill', '#1c2333');
+  svg.appendChild(bg);
+
+  const border = document.createElementNS(ns, 'rect');
+  border.setAttribute('x', data.min_x);
+  border.setAttribute('y', data.min_y);
+  border.setAttribute('width', data.max_x - data.min_x);
+  border.setAttribute('height', data.max_y - data.min_y);
+  border.setAttribute('fill', 'none');
+  border.setAttribute('stroke', 'var(--border)');
+  border.setAttribute('stroke-width', '0.5');
+  border.setAttribute('stroke-dasharray', '2');
+  svg.appendChild(border);
+
+  let pathsAdded = 0;
   for (const layer of data.layers) {
     if (!layer.enabled) continue;
     for (const path of layer.paths) {
-      if (path.points.length < 2) continue;
-      let d = 'M' + path.points.map(p => p[0]+','+p[1]).join('L');
-      html += `<path d="${d}" fill="none" stroke="${path.color || layer.color}" stroke-width="0.5" opacity="0.9"/>`;
+      if (path.points && path.points.length >= 2) {
+        const pathEl = document.createElementNS(ns, 'path');
+        const d = 'M' + path.points.map(p => p[0]+','+p[1]).join(' L');
+        pathEl.setAttribute('d', d);
+        pathEl.setAttribute('fill', 'none');
+        pathEl.setAttribute('stroke', path.color || layer.color || '#fff');
+        pathEl.setAttribute('stroke-width', '0.5');
+        pathEl.setAttribute('opacity', '0.9');
+        svg.appendChild(pathEl);
+        pathsAdded++;
+      }
     }
   }
-  svg.innerHTML = html;
+  console.log(`showSvgPreview added ${pathsAdded} paths to the DOM.`);
   updateTargetLayerSelect(data.layers);
 }
 
