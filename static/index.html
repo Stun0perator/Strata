@@ -607,9 +607,12 @@ function connectWs() {
   ws = new WebSocket(`${proto}://${location.host}/ws`);
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
-    console.log("WS message received:", msg.type, msg);
+    if (msg.type !== 'state') console.log("WS message received:", msg.type, msg);
     if (msg.type === 'state') updateTelemetry(msg.data);
-    else if (msg.type === 'svg_loaded') applySvgPayload(msg.data);
+    else if (msg.type === 'svg_loaded') {
+      console.log("WebSocket routing to applySvgPayload", msg.data);
+      applySvgPayload(msg.data);
+    }
     else if (msg.type === 'pen_swap') showSwapModal(msg.data);
     else if (msg.type === 'pen_swap_ack') hideSwapModal();
     else if (msg.type === 'plot_complete') onPlotComplete(msg.data);
@@ -690,8 +693,20 @@ async function refreshPorts() {
   const d = await apiGet('/api/ports');
   if (!d) return;
   const sel = document.getElementById('port-select');
+  const oldVal = sel.value;
   sel.innerHTML = '<option value="">Select port...</option>';
   (d.ports||[]).forEach(p => { const o = document.createElement('option'); o.value=p; o.textContent=p; sel.appendChild(o); });
+
+  const st = await apiGet('/api/state');
+  const cfg = await apiGet('/api/config');
+  
+  if (st && st.connected && st.serial_port) {
+    sel.value = st.serial_port;
+  } else if (cfg && cfg.last_serial_port && (d.ports||[]).includes(cfg.last_serial_port)) {
+    sel.value = cfg.last_serial_port;
+  } else if (oldVal && (d.ports||[]).includes(oldVal)) {
+    sel.value = oldVal;
+  }
 }
 async function toggleConnect() {
   if (connected) {
@@ -892,17 +907,28 @@ dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.
 function applySvgPayload(d) {
   console.log("applySvgPayload executing with data:", d);
   if (!d || !d.preview) {
-    console.error("applySvgPayload aborted: missing 'preview' in data");
+    console.error("applySvgPayload aborted: missing 'preview' in data. Received:", d);
     return;
   }
-  svgLoaded = true;
-  previewData = d.preview;
-  showSvgPreview(d.preview);
-  showSvgStats(d);
-  document.getElementById('preview-card').style.display = '';
-  document.getElementById('vpype-card').style.display = '';
-  document.getElementById('layers-card').style.display = '';
-  buildLayerList(d.preview.layers);
+  try {
+    console.log("Setting svgLoaded to true");
+    svgLoaded = true;
+    console.log("Setting previewData", d.preview);
+    previewData = d.preview;
+    console.log("Calling showSvgPreview");
+    showSvgPreview(d.preview);
+    console.log("Calling showSvgStats");
+    showSvgStats(d);
+    console.log("Updating display of cards");
+    document.getElementById('preview-card').style.display = '';
+    document.getElementById('vpype-card').style.display = '';
+    document.getElementById('layers-card').style.display = '';
+    console.log("Calling buildLayerList");
+    buildLayerList(d.preview.layers);
+    console.log("applySvgPayload finished successfully");
+  } catch (err) {
+    console.error("Error in applySvgPayload:", err);
+  }
 }
 
 async function handleFileUpload(files) {
@@ -942,24 +968,36 @@ async function loadFiles() {
 
 let isLoadingFile = false;
 async function loadFile(filename) {
-  if (isLoadingFile) return;
+  console.log("loadFile clicked for filename:", filename);
+  if (isLoadingFile) {
+    console.log("loadFile aborted because isLoadingFile is true");
+    return;
+  }
   isLoadingFile = true;
   toast('Loading ' + filename + '...', 'info');
   try {
+    console.log("loadFile sending POST request to /api/files/load");
     const r = await fetch('/api/files/load', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({filename})
     });
+    console.log("loadFile response received, parsing JSON");
     const d = await r.json();
-    if (d.error) { toast(d.error, 'error'); isLoadingFile = false; return; }
-    // We do NOT need to call applySvgPayload(d) here because the backend broadcasts svg_loaded which calls it!
-    // If we call it here, it executes twice and breaks state.
-    // applySvgPayload(d); // REMOVED!
+    console.log("loadFile parsed JSON:", d);
+    if (d.error) { 
+      console.error("loadFile API error:", d.error);
+      toast(d.error, 'error'); 
+      isLoadingFile = false; 
+      return; 
+    }
+    console.log("loadFile success, showing toast. Waiting for WebSocket to update UI.");
     toast('SVG loaded: ' + d.preview.filename, 'success');
   } catch (e) {
+    console.error("loadFile fetch error:", e);
     toast('Failed to load file', 'error');
   } finally {
+    console.log("loadFile setting isLoadingFile to false");
     isLoadingFile = false;
   }
 }
@@ -976,59 +1014,70 @@ function showSvgStats(d) {
 
 function showSvgPreview(data) {
   console.log("showSvgPreview executing with data:", data);
-  const svg = document.getElementById('svg-preview');
-  const pad = 2;
-  const minX = data.min_x - pad;
-  const minY = data.min_y - pad;
-  const w = data.max_x - data.min_x + pad * 2;
-  const h = data.max_y - data.min_y + pad * 2;
-  
-  svg.setAttribute('viewBox', `${minX} ${minY} ${w} ${h}`);
-  
-  while (svg.firstChild) {
-    svg.removeChild(svg.firstChild);
-  }
+  try {
+    const svg = document.getElementById('svg-preview');
+    const pad = 2;
+    const minX = data.min_x - pad;
+    const minY = data.min_y - pad;
+    const w = data.max_x - data.min_x + pad * 2;
+    const h = data.max_y - data.min_y + pad * 2;
+    
+    console.log(`Setting viewBox to: ${minX} ${minY} ${w} ${h}`);
+    svg.setAttribute('viewBox', `${minX} ${minY} ${w} ${h}`);
+    
+    console.log("Clearing existing SVG children");
+    while (svg.firstChild) {
+      svg.removeChild(svg.firstChild);
+    }
 
-  const ns = "http://www.w3.org/2000/svg";
+    const ns = "http://www.w3.org/2000/svg";
 
-  const bg = document.createElementNS(ns, 'rect');
-  bg.setAttribute('x', minX);
-  bg.setAttribute('y', minY);
-  bg.setAttribute('width', w);
-  bg.setAttribute('height', h);
-  bg.setAttribute('fill', '#1c2333');
-  svg.appendChild(bg);
+    console.log("Creating bg rect");
+    const bg = document.createElementNS(ns, 'rect');
+    bg.setAttribute('x', minX);
+    bg.setAttribute('y', minY);
+    bg.setAttribute('width', w);
+    bg.setAttribute('height', h);
+    bg.setAttribute('fill', '#1c2333');
+    svg.appendChild(bg);
 
-  const border = document.createElementNS(ns, 'rect');
-  border.setAttribute('x', data.min_x);
-  border.setAttribute('y', data.min_y);
-  border.setAttribute('width', data.max_x - data.min_x);
-  border.setAttribute('height', data.max_y - data.min_y);
-  border.setAttribute('fill', 'none');
-  border.setAttribute('stroke', 'var(--border)');
-  border.setAttribute('stroke-width', '0.5');
-  border.setAttribute('stroke-dasharray', '2');
-  svg.appendChild(border);
+    console.log("Creating border rect");
+    const border = document.createElementNS(ns, 'rect');
+    border.setAttribute('x', data.min_x);
+    border.setAttribute('y', data.min_y);
+    border.setAttribute('width', data.max_x - data.min_x);
+    border.setAttribute('height', data.max_y - data.min_y);
+    border.setAttribute('fill', 'none');
+    border.setAttribute('stroke', 'var(--border)');
+    border.setAttribute('stroke-width', '0.5');
+    border.setAttribute('stroke-dasharray', '2');
+    svg.appendChild(border);
 
-  let pathsAdded = 0;
-  for (const layer of data.layers) {
-    if (!layer.enabled) continue;
-    for (const path of layer.paths) {
-      if (path.points && path.points.length >= 2) {
-        const pathEl = document.createElementNS(ns, 'path');
-        const d = 'M' + path.points.map(p => p[0]+','+p[1]).join(' L');
-        pathEl.setAttribute('d', d);
-        pathEl.setAttribute('fill', 'none');
-        pathEl.setAttribute('stroke', path.color || layer.color || '#fff');
-        pathEl.setAttribute('stroke-width', '0.5');
-        pathEl.setAttribute('opacity', '0.9');
-        svg.appendChild(pathEl);
-        pathsAdded++;
+    let pathsAdded = 0;
+    console.log("Iterating layers to render paths");
+    for (const layer of data.layers) {
+      if (!layer.enabled) continue;
+      for (const path of layer.paths) {
+        if (path.points && path.points.length >= 2) {
+          const pathEl = document.createElementNS(ns, 'path');
+          const d = 'M' + path.points.map(p => p[0]+','+p[1]).join(' L');
+          pathEl.setAttribute('d', d);
+          pathEl.setAttribute('fill', 'none');
+          pathEl.setAttribute('stroke', path.color || layer.color || '#fff');
+          pathEl.setAttribute('stroke-width', '0.5');
+          pathEl.setAttribute('opacity', '0.9');
+          svg.appendChild(pathEl);
+          pathsAdded++;
+        }
       }
     }
+    console.log(`showSvgPreview added ${pathsAdded} paths to the DOM.`);
+    console.log("Calling updateTargetLayerSelect");
+    updateTargetLayerSelect(data.layers);
+    console.log("showSvgPreview completed successfully");
+  } catch (err) {
+    console.error("Error in showSvgPreview:", err);
   }
-  console.log(`showSvgPreview added ${pathsAdded} paths to the DOM.`);
-  updateTargetLayerSelect(data.layers);
 }
 
 function updateTargetLayerSelect(layers) {

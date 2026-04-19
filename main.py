@@ -92,7 +92,7 @@ async def broadcast_state():
     global ws_clients
     data = json.dumps({"type": "state", "data": state.to_dict()})
     dead = set()
-    for ws in ws_clients:
+    for ws in set(ws_clients):
         try:
             await ws.send_text(data)
         except Exception:
@@ -104,7 +104,7 @@ async def broadcast_message(msg_type: str, data: dict):
     global ws_clients
     payload = json.dumps({"type": msg_type, "data": data})
     dead = set()
-    for ws in ws_clients:
+    for ws in set(ws_clients):
         try:
             await ws.send_text(payload)
         except Exception:
@@ -1089,7 +1089,7 @@ if __name__ == "__main__":
     port = 8080
     url = f"http://{host_ip}:{port}"
 
-    webbrowser.open(f"http://localhost:{port}")
+    # webbrowser.open(f"http://localhost:{port}")
 
     banner = (
         "\n"

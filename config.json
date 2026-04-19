@@ -12,6 +12,7 @@
   "motor_hold_during_swap": true,
   "swap_timeout_warning_minutes": 5,
   "last_serial_port": null,
+  "last_model": 1,
   "last_profile": "Default",
   "plot_queue": [],
   "upload_dir": "/home/pi/uploads",
