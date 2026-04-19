@@ -92,6 +92,8 @@ class SerialManager:
         self._ebb_lm_capable = False
         self._ebb_sr_capable = False
         self._last_pen_servo_pos: int = PEN_SERVO_MAX
+        self._commanded_x: float = 0.0
+        self._commanded_y: float = 0.0
 
     # ---- ports ----
 
@@ -689,26 +691,38 @@ class SerialManager:
 
     def set_home(self):
         self.state.update(current_x=0.0, current_y=0.0)
+        self._commanded_x = 0.0
+        self._commanded_y = 0.0
 
     def walk_home(self):
         self._move_to(0.0, 0.0, travel=True, priority=Priority.MANUAL)
 
     def jog(self, dx_mm: float, dy_mm: float) -> Optional[str]:
-        if not self.is_connected:
-            return "Not connected"
+        if getattr(self, "is_connected", False) or not self.state.connected:
+            if not self.state.connected:
+                return "Not connected"
         try:
             bed_w = float(self.config.get("bed_width_mm", 300) or 300)
             bed_h = float(self.config.get("bed_height_mm", 218) or 218)
         except (TypeError, ValueError):
             bed_w, bed_h = 300.0, 218.0
-        cx = float(self.state.current_x)
-        cy = float(self.state.current_y)
+            
+        if self._cmd_queue.empty() and self.state.plot_state == PlotState.IDLE:
+            self._commanded_x = float(self.state.current_x)
+            self._commanded_y = float(self.state.current_y)
+            
+        cx = self._commanded_x
+        cy = self._commanded_y
         target_x = max(0.0, min(cx + dx_mm, bed_w))
         target_y = max(0.0, min(cy + dy_mm, bed_h))
         rdx = target_x - cx
         rdy = target_y - cy
+        
         if abs(rdx) < 0.001 and abs(rdy) < 0.001:
             return None
+            
+        self._commanded_x = target_x
+        self._commanded_y = target_y
 
         def _cb(_r, nx=target_x, ny=target_y):
             self.state.update(current_x=nx, current_y=ny)

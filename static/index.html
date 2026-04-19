@@ -391,6 +391,13 @@ label { font-size:0.8rem; color:var(--text-muted); }
             <input type="file" id="file-input" accept=".svg" style="display:none" onchange="handleFileUpload(this.files)">
           </div>
           <div id="svg-stats" style="display:none;font-size:0.72rem;margin-bottom:4px;"></div>
+          
+          <div id="file-browser" style="margin-top:0.5rem;">
+            <h4 style="font-size:0.75rem; color:var(--text); margin-bottom:4px;">Uploaded Files</h4>
+            <div id="file-list" style="max-height: 100px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; padding: 0.5rem; font-size: 0.75rem; background: var(--surface2);">
+              <span style="color: var(--text-muted);">Loading...</span>
+            </div>
+          </div>
         </div>
 
         <div style="display:flex;gap:6px;margin-bottom:6px;">
@@ -777,11 +784,6 @@ function populateSliders(p) {
       document.getElementById(vid).textContent = p[k];
     }
   }
-  if (p.model !== undefined) {
-    document.getElementById('s-model').value = p.model;
-    updateBedDisplay(p.model);
-    api('/api/model/select', {model: +p.model});
-  }
   if (p.const_speed !== undefined) document.getElementById('s-const-speed').checked = p.const_speed;
 }
 function populatePaintSettings(p) {
@@ -828,7 +830,6 @@ function gatherProfileData() {
     accel: +document.getElementById('s-accel').value,
     pen_rate_lower: +document.getElementById('s-rate-lower').value,
     pen_rate_raise: +document.getElementById('s-rate-raise').value,
-    model: +document.getElementById('s-model').value,
     const_speed: document.getElementById('s-const-speed').checked,
     paint_enabled: document.getElementById('p-enabled').checked,
     dip_threshold_mm: +document.getElementById('p-dip-thresh').value,
@@ -909,7 +910,45 @@ async function handleFileUpload(files) {
     if (d.error) { toast(d.error,'error'); return; }
     applySvgPayload(d);
     toast('SVG loaded: '+d.preview.filename,'success');
+    loadFiles(); // refresh file list after upload
   } catch(e) { toast('Upload failed','error'); }
+}
+
+async function loadFiles() {
+  const fileList = document.getElementById('file-list');
+  if (!fileList) return;
+  try {
+    const r = await fetch('/api/files');
+    const d = await r.json();
+    if (d.files && d.files.length > 0) {
+      fileList.innerHTML = d.files.map(f => `
+        <div class="file-item" style="display: flex; justify-content: space-between; padding: 4px 4px; cursor: pointer; border-bottom: 1px solid var(--border);" onclick="loadFile('${f.name}')" onmouseover="this.style.background='var(--accent)';" onmouseout="this.style.background='transparent';">
+          <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; pointer-events: none;">${f.name}</span>
+          <span style="color: var(--text-muted); pointer-events: none;">${(f.size/1024).toFixed(1)} KB</span>
+        </div>
+      `).join('');
+    } else {
+      fileList.innerHTML = '<span style="color: var(--text-muted);">No uploaded files</span>';
+    }
+  } catch (e) {
+    fileList.innerHTML = '<span style="color: red;">Error loading files</span>';
+  }
+}
+
+async function loadFile(filename) {
+  try {
+    const r = await fetch('/api/files/load', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({filename})
+    });
+    const d = await r.json();
+    if (d.error) { toast(d.error, 'error'); return; }
+    applySvgPayload(d);
+    toast('SVG loaded: ' + d.preview.filename, 'success');
+  } catch (e) {
+    toast('Failed to load file', 'error');
+  }
 }
 
 function showSvgStats(d) {
@@ -1295,6 +1334,9 @@ function toast(msg, type='info') {
         `Tray: (${cfg.tray_x_mm}, ${cfg.tray_y_mm})` +
         (cfg.water_dish_x_mm != null ? ` | Water: (${cfg.water_dish_x_mm}, ${cfg.water_dish_y_mm})` : '');
     }
+    if (cfg.last_model) {
+      document.getElementById('s-model').value = cfg.last_model;
+    }
   }
   const lastProfile = cfg?.last_profile || 'Default';
   activeProfile = lastProfile;
@@ -1302,6 +1344,9 @@ function toast(msg, type='info') {
   await loadProfile(lastProfile);
   await loadQueue();
   await refreshPorts();
+  await loadFiles();
+  const st = await apiGet('/api/state');
+  if (st) updateTelemetry(st);
 })();
 </script>
 </body>

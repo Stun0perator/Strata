@@ -449,7 +449,7 @@ async def upload_svg(file: UploadFile = File(...)):
         logger.exception("SVG upload: failed to write %s", filepath)
         return JSONResponse({"error": f"Could not save file: {e}"}, 500)
     try:
-        svg_data = svg_proc.load_svg(str(filepath))
+        svg_data = svg_proc.load(str(filepath))
     except ValueError as e:
         logger.warning("SVG upload: load_svg failed for %s: %s", filepath, e)
         return JSONResponse({"error": str(e)}, 400)
@@ -474,6 +474,69 @@ async def upload_svg(file: UploadFile = File(...)):
             "estimated_dips": est_dips,
             "estimated_time_s": est_time,
             "filename": safe,
+        },
+    )
+    await broadcast_state()
+
+    return {
+        "preview": preview,
+        "estimated_dips": est_dips,
+        "estimated_time_s": est_time,
+    }
+
+@app.get("/api/files")
+async def list_files():
+    files = []
+    if UPLOAD_DIR.exists():
+        for p in UPLOAD_DIR.glob("*.svg"):
+            try:
+                st = p.stat()
+                files.append({
+                    "name": p.name,
+                    "size": st.st_size,
+                    "date": st.st_mtime
+                })
+            except Exception:
+                pass
+    files.sort(key=lambda x: x["date"], reverse=True)
+    return {"files": files}
+
+@app.post("/api/files/load")
+async def load_file(request: Request):
+    body = await request.json()
+    filename = body.get("filename")
+    if not filename:
+        return JSONResponse({"error": "Missing filename"}, 400)
+    filepath = UPLOAD_DIR / Path(filename).name
+    if not filepath.exists() or not filepath.is_file():
+        return JSONResponse({"error": "File not found"}, 404)
+        
+    try:
+        svg_data = svg_proc.load(str(filepath))
+    except ValueError as e:
+        logger.warning("SVG load failed for %s: %s", filepath, e)
+        return JSONResponse({"error": str(e)}, 400)
+    except Exception as e:
+        logger.exception("SVG unexpected error loading %s", filepath)
+        return JSONResponse({"error": str(e)}, 500)
+
+    profile = config.get_profile(config.get("last_profile", "Default")) or {}
+    dip_threshold = profile.get("dip_threshold_mm", 80)
+    speed = profile.get("speed_pendown", 25)
+    travel = profile.get("speed_penup", 75)
+
+    preview = svg_data.to_preview_json()
+    est_dips = svg_proc.estimate_dips(dip_threshold)
+    est_time = round(svg_proc.estimate_time_seconds(speed, travel), 1)
+
+    state.update(current_file=filename)
+    await broadcast_message(
+        "svg_loaded",
+        {
+            "preview": preview,
+            "estimated_dips": est_dips,
+            "estimated_time_s": est_time,
+            "filename": filename,
         },
     )
     await broadcast_state()

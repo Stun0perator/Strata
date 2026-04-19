@@ -134,7 +134,7 @@ class SVGProcessor:
     def has_svg(self) -> bool:
         return self._current is not None
 
-    def load_svg(self, filepath: str) -> SVGData:
+    def load(self, filepath: str) -> SVGData:
         """Load and parse an SVG file into structured layer/path data."""
         self._original_svg_path = filepath
 
