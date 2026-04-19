@@ -1,0 +1,21 @@
+{
+  "Default": {
+    "speed_pendown": 25,
+    "speed_penup": 75,
+    "pen_pos_down": 40,
+    "pen_pos_up": 60,
+    "accel": 75,
+    "pen_rate_lower": 50,
+    "pen_rate_raise": 75,
+    "model": 1,
+    "const_speed": false,
+    "paint_enabled": false,
+    "dip_threshold_mm": 80,
+    "swirl_diameter_mm": 8,
+    "swirl_count": 3,
+    "swirl_speed": 25,
+    "tray_pen_down_depth": 30,
+    "pressure_taper_enabled": false,
+    "pressure_taper_mm": 2
+  }
+}

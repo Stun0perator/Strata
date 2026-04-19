@@ -1,0 +1,20 @@
+{
+  "bed_width_mm": 300,
+  "bed_height_mm": 218,
+  "steps_per_mm": 80,
+  "servo_min": 7500,
+  "servo_max": 28000,
+  "tray_x_mm": 0,
+  "tray_y_mm": 0,
+  "water_dish_x_mm": null,
+  "water_dish_y_mm": null,
+  "auto_home_on_connect": true,
+  "motor_hold_during_swap": true,
+  "swap_timeout_warning_minutes": 5,
+  "last_serial_port": null,
+  "last_profile": "Default",
+  "plot_queue": [],
+  "upload_dir": "/home/pi/uploads",
+  "recording_dir": "/home/pi/recordings",
+  "finished_dir": "/home/pi/plot_finished"
+}

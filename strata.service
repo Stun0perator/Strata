@@ -1,0 +1,12 @@
+[Unit]
+Description=Strata Plotter Control
+After=network.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/strata
+ExecStart=/usr/bin/python3 main.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,1308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Strata — Plotter Control</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<style>
+:root {
+  --bg: #0e1117;
+  --surface: #161b22;
+  --surface2: #1c2333;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-muted: #8b949e;
+  --accent: #58a6ff;
+  --accent-hover: #79c0ff;
+  --green: #3fb950;
+  --red: #f85149;
+  --orange: #d29922;
+  --purple: #bc8cff;
+  --sidebar-w: 180px;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: var(--bg); color: var(--text); display:flex; height:100vh; overflow:hidden; }
+button { cursor:pointer; font-family:inherit; font-size:0.85rem; border:1px solid var(--border);
+  background:var(--surface2); color:var(--text); padding:6px 14px; border-radius:6px; transition:all .15s; }
+button:hover { background:var(--accent); color:#fff; border-color:var(--accent); }
+button:active { transform:scale(0.97); }
+button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+button.primary:hover { background:var(--accent-hover); }
+button.danger { background:var(--red); color:#fff; border-color:var(--red); }
+button.danger:hover { opacity:0.85; }
+button.success { background:var(--green); color:#fff; border-color:var(--green); }
+button:disabled { opacity:0.4; cursor:not-allowed; }
+input, select { font-family:inherit; font-size:0.85rem; background:var(--surface2); color:var(--text);
+  border:1px solid var(--border); padding:6px 10px; border-radius:6px; outline:none; }
+input:focus, select:focus { border-color:var(--accent); }
+input[type=range] { padding:0; border:none; background:none; accent-color:var(--accent); }
+label { font-size:0.8rem; color:var(--text-muted); }
+
+/* sidebar */
+#sidebar { width:var(--sidebar-w); background:var(--surface); border-right:1px solid var(--border);
+  display:flex; flex-direction:column; flex-shrink:0; }
+#sidebar .logo { padding:14px 12px 8px; font-size:1.1rem; font-weight:700; letter-spacing:1px;
+  color:var(--accent); border-bottom:1px solid var(--border); }
+#sidebar .logo small { display:block; font-size:0.55rem; font-weight:400; color:var(--text-muted);
+  letter-spacing:0; margin-top:2px; }
+#sidebar nav { flex:1; padding:8px 0; }
+#sidebar nav a { display:flex; align-items:center; gap:8px; padding:9px 12px; color:var(--text-muted);
+  text-decoration:none; font-size:0.8rem; border-left:3px solid transparent; transition:all .15s; }
+#sidebar nav a:hover { color:var(--text); background:var(--surface2); }
+#sidebar nav a.active { color:var(--accent); border-left-color:var(--accent); background:rgba(88,166,255,0.08); }
+#sidebar nav a .icon { width:16px; text-align:center; font-size:0.95rem; }
+#sidebar .status-bar { padding:10px 12px; border-top:1px solid var(--border); font-size:0.7rem; }
+.status-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+.status-dot.green { background:var(--green); box-shadow:0 0 6px var(--green); }
+.status-dot.red { background:var(--red); box-shadow:0 0 6px var(--red); }
+.status-dot.orange { background:var(--orange); box-shadow:0 0 6px var(--orange); }
+
+/* main */
+#main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+
+/* top bar — full-width single row */
+#top-bar { display:flex; align-items:center; gap:10px; padding:6px 14px; background:var(--surface);
+  border-bottom:1px solid var(--border); flex-shrink:0; }
+#top-bar .status-dot { margin-right:2px; }
+#top-bar select { font-size:0.78rem; padding:4px 8px; }
+#top-bar button { font-size:0.78rem; padding:4px 12px; }
+#top-bar label { font-size:0.72rem; display:flex; align-items:center; gap:4px; }
+#top-bar .fw-info { font-size:0.68rem; color:var(--text-muted); }
+#top-bar .divider { width:1px; height:22px; background:var(--border); }
+
+/* middle section — 3 columns */
+#middle-section { display:grid; grid-template-columns:minmax(160px,20fr) minmax(360px,45fr) minmax(240px,35fr);
+  gap:0; border-bottom:1px solid var(--border); background:var(--surface);
+  overflow-y:auto; max-height:50vh; flex-shrink:0; }
+#middle-section > .panel { padding:10px 12px; border-right:1px solid var(--border); }
+#middle-section > .panel:last-child { border-right:none; }
+.panel h3 { font-size:0.75rem; font-weight:600; margin-bottom:6px; color:var(--accent);
+  text-transform:uppercase; letter-spacing:.5px; }
+.panel h4 { font-size:0.75rem; font-weight:600; margin:6px 0 5px; color:var(--text); }
+
+/* telemetry — left panel compact */
+.telem-grid { display:grid; grid-template-columns:1fr 1fr; gap:3px; }
+.telem-item { background:var(--surface2); border-radius:4px; padding:4px 6px; }
+.telem-item .label { font-size:0.55rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:.3px; }
+.telem-item .value { font-size:0.8rem; font-weight:600; font-variant-numeric:tabular-nums; }
+.progress-bar { width:100%; height:4px; background:var(--surface2); border-radius:3px; overflow:hidden; margin-top:4px; }
+.progress-bar .fill { height:100%; background:var(--accent); border-radius:3px; transition:width .3s; }
+
+/* jog pad — large tappable buttons */
+.jog-pad { display:grid; grid-template-columns:repeat(3,88px); grid-template-rows:repeat(3,88px); gap:5px;
+  justify-content:center; margin:8px 0; }
+.jog-pad button { width:88px; height:88px; font-size:2rem; display:flex; align-items:center;
+  justify-content:center; border-radius:10px; }
+.jog-pad .center { background:var(--surface); border-color:transparent; cursor:default;
+  font-size:0.8rem; color:var(--text-muted); }
+.jog-pad .center:hover { background:var(--surface); color:var(--text-muted); }
+.step-sizes { display:flex; gap:6px; justify-content:center; margin-bottom:6px; }
+.step-sizes button { padding:6px 14px; font-size:0.85rem; }
+.step-sizes button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+
+/* center panel controls */
+#middle-section > .panel:nth-child(2) { padding:10px 16px; }
+#middle-section > .panel:nth-child(2) .btn-row button { font-size:0.82rem; padding:5px 14px; }
+
+/* right panel (settings) compact */
+#middle-section > .panel:last-child .form-row { margin-bottom:2px; }
+#middle-section > .panel:last-child .form-row label { min-width:72px; font-size:0.68rem; }
+#middle-section > .panel:last-child .form-row .val { font-size:0.7rem; min-width:22px; }
+#middle-section > .panel:last-child h3 { margin-bottom:4px; font-size:0.72rem; }
+#middle-section > .panel:last-child input[type=range] { height:14px; }
+#middle-section > .panel:last-child select { font-size:0.7rem; padding:3px 5px; }
+#middle-section > .panel:last-child button { font-size:0.68rem; padding:3px 7px; }
+.dim-display { font-size:0.68rem; color:var(--text-muted); margin-top:2px; }
+.dim-display strong { color:var(--text); font-weight:600; }
+
+/* form rows */
+.form-row { display:flex; align-items:center; gap:6px; margin-bottom:4px; flex-wrap:wrap; }
+.form-row label { min-width:90px; font-size:0.75rem; }
+.form-row input[type=range] { flex:1; min-width:60px; }
+.form-row .val { min-width:28px; text-align:right; font-variant-numeric:tabular-nums; font-size:0.78rem; }
+.btn-row { display:flex; gap:5px; flex-wrap:wrap; margin-bottom:6px; }
+
+/* bottom section */
+#bottom-section { flex:1; overflow:hidden; display:flex; flex-direction:column; }
+.bottom-view { display:none; flex:1; overflow:hidden; }
+.bottom-view.active { display:flex; }
+#view-home { display:none; flex:1; }
+#view-home.active { display:grid; grid-template-columns:2fr 3fr; gap:0; }
+#view-home > .file-col { overflow-y:auto; padding:10px 12px; border-right:1px solid var(--border); }
+#view-home > .webcam-col { display:flex; flex-direction:column; overflow:hidden; background:var(--surface); }
+
+/* cards */
+.card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:8px 10px; margin-bottom:6px; }
+.card h3 { font-size:0.75rem; font-weight:600; margin-bottom:4px; color:var(--text); }
+
+/* SVG preview */
+#svg-preview-container { background:var(--surface2); border:1px solid var(--border); border-radius:6px;
+  position:relative; overflow:hidden; aspect-ratio:16/9; margin-bottom:6px; }
+#svg-preview-container svg { width:100%; height:100%; }
+.drop-zone { border:2px dashed var(--border); border-radius:6px; padding:12px; text-align:center;
+  color:var(--text-muted); transition:all .2s; margin-bottom:6px; cursor:pointer; font-size:0.78rem; }
+.drop-zone:hover, .drop-zone.dragover { border-color:var(--accent); color:var(--accent); background:rgba(88,166,255,0.05); }
+
+/* layer list */
+.layer-row { display:flex; align-items:center; gap:6px; padding:4px 8px; background:var(--surface2);
+  border-radius:5px; margin-bottom:2px; cursor:grab; font-size:0.78rem; }
+.layer-row:active { cursor:grabbing; }
+.layer-swatch { width:10px; height:10px; border-radius:3px; border:1px solid var(--border); flex-shrink:0; }
+.layer-name { flex:1; font-size:0.78rem; }
+.layer-info { font-size:0.68rem; color:var(--text-muted); }
+
+/* vpype ops */
+.vpype-op { display:flex; align-items:center; gap:6px; padding:4px 8px; background:var(--surface2);
+  border-radius:4px; margin-bottom:2px; font-size:0.75rem; }
+.vpype-op input[type=checkbox] { accent-color:var(--accent); }
+.vpype-op .op-name { font-size:0.75rem; flex:1; }
+.vpype-op input[type=number] { width:55px; font-size:0.72rem; padding:2px 4px; }
+
+/* queue item */
+.queue-item { display:flex; align-items:center; gap:6px; padding:4px 8px; background:var(--surface2);
+  border-radius:5px; margin-bottom:2px; }
+.queue-item .q-file { flex:1; font-size:0.75rem; }
+.queue-item .q-profile { font-size:0.68rem; color:var(--purple); }
+
+/* selection toolbar */
+.selection-toolbar { display:flex; gap:4px; margin-bottom:6px; align-items:center; }
+.selection-toolbar button.active { background:var(--accent); color:#fff; }
+
+/* webcam column */
+.webcam-col .cam-header { padding:10px 12px; flex-shrink:0; }
+.webcam-col .cam-header h3 { font-size:0.78rem; font-weight:600; color:var(--accent);
+  text-transform:uppercase; letter-spacing:.4px; margin-bottom:6px; }
+.webcam-col .cam-controls { display:flex; gap:5px; flex-wrap:wrap; align-items:center; }
+.webcam-col .cam-controls button { font-size:0.78rem; padding:4px 12px; }
+.webcam-col .cam-controls select { font-size:0.78rem; padding:4px 8px; }
+.webcam-col .cam-feed-wrap { background:#000; border-radius:6px; overflow:hidden; flex:1;
+  min-height:320px; margin:0 10px 10px; }
+.webcam-col .cam-feed-wrap img { width:100%; height:100%; object-fit:contain; display:block; }
+.cam-rec-indicator { font-size:0.72rem; color:var(--red); display:flex; align-items:center; gap:4px; }
+.rec-dot { display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--red);
+  animation:pulse 1s infinite; margin-right:4px; }
+@keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+.webcam-col .recordings-section { padding:0 12px 10px; max-height:120px; overflow-y:auto; flex-shrink:0; }
+.webcam-col .recordings-section h4 { font-size:0.7rem; color:var(--text-muted); margin-bottom:4px; }
+
+/* tab views (paint, terminal, history) */
+.bottom-view.tab-content { padding:14px; overflow-y:auto; display:none; }
+.bottom-view.tab-content.active { display:block; }
+
+/* history table */
+.history-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
+.history-table th { text-align:left; padding:8px 10px; border-bottom:2px solid var(--border);
+  color:var(--text-muted); font-weight:500; font-size:0.72rem; text-transform:uppercase; letter-spacing:.5px; }
+.history-table td { padding:8px 10px; border-bottom:1px solid var(--border); }
+.history-table tr:hover td { background:var(--surface2); }
+
+/* terminal */
+#terminal-container { height:calc(100vh - 200px); background:#000; border-radius:8px; overflow:hidden; }
+
+/* modal */
+.modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.75); display:none; align-items:center;
+  justify-content:center; z-index:1000; }
+.modal-overlay.visible { display:flex; }
+.modal { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:32px;
+  max-width:520px; width:90%; max-height:80vh; overflow-y:auto; }
+.modal h2 { font-size:1.1rem; margin-bottom:16px; }
+.modal .layer-preview { display:flex; align-items:center; gap:10px; padding:12px; background:var(--surface2);
+  border-radius:8px; margin:12px 0; }
+
+/* scrollbar */
+::-webkit-scrollbar { width:7px; }
+::-webkit-scrollbar-track { background:var(--bg); }
+::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
+::-webkit-scrollbar-thumb:hover { background:var(--text-muted); }
+
+/* toast */
+#toast-container { position:fixed; top:16px; right:16px; z-index:2000; display:flex; flex-direction:column; gap:8px; }
+.toast { padding:12px 18px; border-radius:8px; font-size:0.85rem; animation:slideIn .2s; max-width:360px; }
+.toast.error { background:var(--red); color:#fff; }
+.toast.success { background:var(--green); color:#fff; }
+.toast.info { background:var(--accent); color:#fff; }
+@keyframes slideIn { from{transform:translateX(100%);opacity:0;} to{transform:translateX(0);opacity:1;} }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<div id="sidebar">
+  <div class="logo">STRATA<small>Plotter Control System</small></div>
+  <nav>
+    <a href="#" data-tab="home" class="active"><span class="icon">&#9776;</span>Home</a>
+    <a href="#" data-tab="paint"><span class="icon">&#127912;</span>Paint Mode</a>
+    <a href="#" data-tab="terminal"><span class="icon">&#9002;</span>Terminal</a>
+    <a href="#" data-tab="history"><span class="icon">&#128203;</span>History</a>
+  </nav>
+  <div class="status-bar">
+    <span class="status-dot red" id="status-dot"></span>
+    <span id="status-text">Disconnected</span>
+  </div>
+</div>
+
+<!-- Main Area -->
+<div id="main">
+
+  <!-- ========== TOP BAR — single compact row ========== -->
+  <div id="top-bar">
+    <span class="status-dot red" id="top-status-dot"></span>
+    <select id="port-select" style="min-width:140px"><option value="">Select port...</option></select>
+    <button onclick="refreshPorts()">Refresh</button>
+    <button class="primary" id="connect-btn" onclick="toggleConnect()">Connect</button>
+    <span class="divider"></span>
+    <label><input type="checkbox" id="auto-home-chk" checked onchange="saveAutoHome()"> Auto-home</label>
+    <span class="divider"></span>
+    <span id="firmware-info" class="fw-info"></span>
+  </div>
+
+  <!-- ========== MIDDLE SECTION — 3 columns ========== -->
+  <div id="middle-section">
+
+    <!-- LEFT (20%): Telemetry -->
+    <div class="panel">
+      <h3>Telemetry</h3>
+      <div class="telem-grid">
+        <div class="telem-item"><div class="label">Position</div><div class="value" id="t-pos">0, 0</div></div>
+        <div class="telem-item"><div class="label">State</div><div class="value" id="t-state">Idle</div></div>
+        <div class="telem-item"><div class="label">Layer</div><div class="value" id="t-layer">—</div></div>
+        <div class="telem-item"><div class="label">Distance</div><div class="value" id="t-dist">0 mm</div></div>
+        <div class="telem-item"><div class="label">Sess Dist</div><div class="value" id="t-sdist">0 mm</div></div>
+        <div class="telem-item"><div class="label">Dips</div><div class="value" id="t-dips">0</div></div>
+        <div class="telem-item"><div class="label">Dips Left</div><div class="value" id="t-dips-rem">—</div></div>
+        <div class="telem-item"><div class="label">Elapsed</div><div class="value" id="t-elapsed">00:00:00</div></div>
+      </div>
+      <div class="progress-bar" style="margin-top:6px">
+        <div class="fill" id="plot-progress" style="width:0%"></div>
+      </div>
+      <div style="font-size:0.6rem;color:var(--text-muted);margin-top:2px" id="progress-label">0 / 0 mm</div>
+    </div>
+
+    <!-- CENTER (45%): Manual Controls -->
+    <div class="panel">
+      <h3>Manual Controls</h3>
+      <div style="display:flex;gap:20px;align-items:flex-start;">
+        <div>
+          <div class="step-sizes" id="step-sizes">
+            <button onclick="setStep(0.1)">0.1</button>
+            <button onclick="setStep(1)" class="active">1</button>
+            <button onclick="setStep(10)">10</button>
+            <button onclick="setStep(50)">50</button>
+          </div>
+          <div class="jog-pad">
+            <div></div>
+            <button onclick="doJog(0,-1)">&#9650;</button>
+            <div></div>
+            <button onclick="doJog(-1,0)">&#9664;</button>
+            <button class="center" id="jog-step-display">1 mm</button>
+            <button onclick="doJog(1,0)">&#9654;</button>
+            <div></div>
+            <button onclick="doJog(0,1)">&#9660;</button>
+            <div></div>
+          </div>
+        </div>
+        <div style="flex:1;min-width:0;">
+          <h4 style="margin-top:0">Pen</h4>
+          <div class="btn-row">
+            <button onclick="api('/api/pen/up')">Up</button>
+            <button onclick="api('/api/pen/down')">Down</button>
+            <button onclick="api('/api/pen/toggle')">Toggle</button>
+          </div>
+          <h4>Position</h4>
+          <div class="btn-row">
+            <button onclick="api('/api/home')">Walk Home</button>
+            <button onclick="api('/api/set_home')">Set Home</button>
+          </div>
+          <h4>Motors</h4>
+          <div class="btn-row">
+            <button onclick="api('/api/motors/enable')">Enable</button>
+            <button onclick="api('/api/motors/disable')">Disable</button>
+          </div>
+          <h4>Test</h4>
+          <div class="btn-row">
+            <button onclick="api('/api/bounding_box')">Bounding Box</button>
+            <button onclick="api('/api/dry_run')">Dry Run</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT (35%): Plot Settings -->
+    <div class="panel">
+      <h3>Plot Settings</h3>
+      <div class="form-row" style="margin-bottom:6px">
+        <select id="profile-select" onchange="loadProfile(this.value)" style="flex:1"></select>
+        <button onclick="saveCurrentProfile()">Save</button>
+        <button onclick="promptNewProfile()">As...</button>
+        <button onclick="duplicateProfile()">Dup</button>
+        <button onclick="deleteCurrentProfile()">Del</button>
+      </div>
+      <span id="profile-badge" style="font-size:0.62rem;color:var(--purple);
+        background:rgba(188,140,255,0.1);padding:2px 6px;border-radius:10px;display:inline-block;margin-bottom:4px">Default</span>
+
+      <div class="form-row"><label>Draw Speed</label>
+        <input type="range" min="1" max="100" value="25" id="s-speed-down" oninput="sliderPreview('speed_pendown',this.value)" onchange="liveOverrideCommit('speed_pendown',this.value)">
+        <span class="val" id="v-speed-down">25</span></div>
+      <div class="form-row"><label>Travel Speed</label>
+        <input type="range" min="1" max="100" value="75" id="s-speed-up" oninput="sliderPreview('speed_penup',this.value)" onchange="liveOverrideCommit('speed_penup',this.value)">
+        <span class="val" id="v-speed-up">75</span></div>
+      <div class="form-row"><label>Pen Down Ht</label>
+        <input type="range" min="0" max="100" value="20" id="s-pen-down" oninput="sliderPreview('pen_pos_down',this.value)" onchange="liveOverrideCommit('pen_pos_down',this.value)">
+        <span class="val" id="v-pen-down">20</span></div>
+      <div class="form-row"><label>Pen Up Ht</label>
+        <input type="range" min="0" max="100" value="60" id="s-pen-up" oninput="sliderPreview('pen_pos_up',this.value)" onchange="liveOverrideCommit('pen_pos_up',this.value)">
+        <span class="val" id="v-pen-up">60</span></div>
+      <div class="form-row"><label>Acceleration</label>
+        <input type="range" min="1" max="100" value="75" id="s-accel" oninput="sliderPreview('accel',this.value)" onchange="liveOverrideCommit('accel',this.value)">
+        <span class="val" id="v-accel">75</span></div>
+      <div class="form-row"><label>Pen Lower Rate</label>
+        <input type="range" min="1" max="100" value="50" id="s-rate-lower" oninput="sliderPreview('pen_rate_lower',this.value)" onchange="liveOverrideCommit('pen_rate_lower',this.value)">
+        <span class="val" id="v-rate-lower">50</span></div>
+      <div class="form-row"><label>Pen Raise Rate</label>
+        <input type="range" min="1" max="100" value="75" id="s-rate-raise" oninput="sliderPreview('pen_rate_raise',this.value)" onchange="liveOverrideCommit('pen_rate_raise',this.value)">
+        <span class="val" id="v-rate-raise">75</span></div>
+      <div class="form-row"><label>Model</label>
+        <select id="s-model" onchange="onModelChange(this.value)" style="flex:1">
+          <option value="1">AxiDraw V2/V3</option>
+          <option value="2">AxiDraw V3/A3</option>
+          <option value="3">AxiDraw SE/A1</option>
+          <option value="4">AxiDraw SE/A3</option>
+          <option value="5">AxiDraw V3 XLX</option>
+          <option value="7">AxiDraw MiniKit</option>
+        </select></div>
+      <div class="dim-display">Bed: <strong id="s-bed-display">300 × 218 mm</strong></div>
+      <div class="form-row" style="margin-top:4px"><label><input type="checkbox" id="s-const-speed"> Constant Velocity</label></div>
+    </div>
+  </div><!-- /middle-section -->
+
+  <!-- ========== BOTTOM SECTION ========== -->
+  <div id="bottom-section">
+
+    <!-- HOME VIEW: File & Execution (left) + Webcam (right) -->
+    <div class="bottom-view active" id="view-home">
+      <!-- Left: File & Execution -->
+      <div class="file-col">
+        <div class="card">
+          <h3>SVG Upload</h3>
+          <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+            Drop SVG or click to browse
+            <input type="file" id="file-input" accept=".svg" style="display:none" onchange="handleFileUpload(this.files)">
+          </div>
+          <div id="svg-stats" style="display:none;font-size:0.72rem;margin-bottom:4px;"></div>
+        </div>
+
+        <div style="display:flex;gap:6px;margin-bottom:6px;">
+          <div class="card" style="margin-bottom:0;flex:1">
+            <h3>Execution</h3>
+            <div class="btn-row" style="margin-bottom:0">
+              <button class="success" onclick="startPlot()" id="btn-start" style="padding:6px 16px">START</button>
+              <button onclick="pausePlot()" id="btn-pause" style="font-size:0.75rem">PAUSE</button>
+              <button onclick="resumePlot()" id="btn-resume" style="font-size:0.75rem">RESUME</button>
+              <button class="danger" onclick="emergencyStop()" style="padding:6px 16px">E-STOP</button>
+            </div>
+          </div>
+          <div class="card" style="margin-bottom:0;flex:1" id="queue-card">
+            <h3>Plot Queue</h3>
+            <div id="queue-list" style="max-height:60px;overflow-y:auto;"></div>
+            <button onclick="addToQueue()" style="margin-top:3px;font-size:0.7rem;padding:2px 8px">Add to Queue</button>
+          </div>
+        </div>
+
+        <div class="card" id="preview-card" style="display:none">
+          <h3>Preview</h3>
+          <div class="selection-toolbar" style="gap:3px;margin-bottom:4px;">
+            <button id="sel-rect" class="active" onclick="setSelTool('rect')" style="font-size:0.72rem;padding:2px 6px">&#9634; Rect</button>
+            <button id="sel-circle" onclick="setSelTool('circle')" style="font-size:0.72rem;padding:2px 6px">&#9675; Circle</button>
+            <button id="sel-lasso" onclick="setSelTool('lasso')" style="font-size:0.72rem;padding:2px 6px">&#10047; Lasso</button>
+            <span style="flex:1"></span>
+            <select id="target-layer-select" style="font-size:0.72rem;padding:2px 4px"><option value="__new__">New Layer...</option></select>
+            <button onclick="applySelection()" style="font-size:0.72rem;padding:2px 6px">Apply</button>
+            <button onclick="setAsMask()" style="font-size:0.72rem;padding:2px 6px">Set as Mask</button>
+            <button onclick="svgUndo()" style="font-size:0.72rem;padding:2px 6px">Undo</button>
+          </div>
+          <div id="svg-preview-container"><svg id="svg-preview" viewBox="0 0 300 218"></svg></div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <div class="card" id="vpype-card" style="display:none;margin-bottom:0">
+            <h3>vpype Optimization</h3>
+            <div class="vpype-op"><input type="checkbox" id="vp-linemerge" checked><span class="op-name">linemerge</span>
+              <label>tol</label><input type="number" id="vp-linemerge-tol" value="0.5" min="0.1" step="0.1"> mm</div>
+            <div class="vpype-op"><input type="checkbox" id="vp-linesort" checked><span class="op-name">linesort</span></div>
+            <div class="vpype-op"><input type="checkbox" id="vp-filter"><span class="op-name">filter</span>
+              <label>min</label><input type="number" id="vp-filter-len" value="1.0" min="0.1" step="0.1"> mm</div>
+            <div class="vpype-op"><input type="checkbox" id="vp-splitall"><span class="op-name">splitall</span></div>
+            <div class="vpype-op"><input type="checkbox" id="vp-scaleto"><span class="op-name">scaleto</span></div>
+            <div class="btn-row" style="margin-top:4px">
+              <button class="primary" onclick="runVpype()" style="font-size:0.72rem;padding:3px 8px">Run vpype</button>
+              <label style="display:flex;align-items:center;gap:3px;font-size:0.68rem">
+                <input type="checkbox" id="use-optimized" onchange="toggleOptimized()"> Use optimized</label>
+            </div>
+            <div id="vpype-stats" style="font-size:0.65rem;color:var(--text-muted);margin-top:3px;"></div>
+          </div>
+          <div class="card" id="layers-card" style="display:none;margin-bottom:0">
+            <h3>Layers</h3>
+            <div id="layer-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Webcam -->
+      <div class="webcam-col">
+        <div class="cam-header">
+          <h3>Webcam</h3>
+          <div class="cam-controls">
+            <select id="cam-res" style="min-width:70px">
+              <option value="480p">480p</option>
+              <option value="720p" selected>720p</option>
+              <option value="1080p">1080p</option>
+            </select>
+            <button class="primary" onclick="startWebcam()">Start</button>
+            <button onclick="stopWebcam()">Stop</button>
+            <span style="flex:1"></span>
+            <span id="rec-indicator" style="display:none" class="cam-rec-indicator"><span class="rec-dot"></span>REC</span>
+            <button onclick="toggleRecording()" id="rec-btn">Record</button>
+          </div>
+        </div>
+        <div class="cam-feed-wrap">
+          <img id="webcam-feed" src="" alt="" style="display:none">
+          <div id="cam-placeholder" style="display:flex;align-items:center;justify-content:center;height:100%;
+            color:var(--text-muted);font-size:0.8rem;text-align:center;padding:20px;">
+            Click Start to begin webcam feed
+          </div>
+        </div>
+        <div class="recordings-section">
+          <h4>Recordings</h4>
+          <div id="recordings-list" style="font-size:0.75rem;color:var(--text-muted);">No recordings yet</div>
+        </div>
+      </div>
+    </div><!-- /view-home -->
+
+    <!-- PAINT MODE VIEW -->
+    <div class="bottom-view tab-content" id="view-paint">
+      <div class="card">
+        <h3>Paint / Dip Settings</h3>
+        <div class="form-row"><label><input type="checkbox" id="p-enabled" onchange="savePaintSettings()"> Enable Paint Mode</label></div>
+        <div class="form-row"><label>Dip Threshold</label>
+          <input type="range" min="10" max="500" value="80" id="p-dip-thresh" oninput="updatePaintVal()">
+          <span class="val" id="v-dip-thresh">80</span> mm</div>
+        <div class="form-row"><label>Swirl Diameter</label>
+          <input type="range" min="2" max="30" value="8" id="p-swirl-d" oninput="updatePaintVal()">
+          <span class="val" id="v-swirl-d">8</span> mm</div>
+        <div class="form-row"><label>Swirl Count</label>
+          <input type="range" min="1" max="10" value="3" id="p-swirl-n" oninput="updatePaintVal()">
+          <span class="val" id="v-swirl-n">3</span></div>
+        <div class="form-row"><label>Swirl Speed</label>
+          <input type="range" min="1" max="100" value="25" id="p-swirl-speed" oninput="updatePaintVal()">
+          <span class="val" id="v-swirl-speed">25</span></div>
+        <div class="form-row"><label>Tray Pen-Down Depth</label>
+          <input type="range" min="0" max="100" value="30" id="p-tray-depth" oninput="updatePaintVal()">
+          <span class="val" id="v-tray-depth">30</span></div>
+      </div>
+      <div class="card">
+        <h3>Brush Pressure Taper</h3>
+        <div class="form-row"><label><input type="checkbox" id="p-taper-on" onchange="savePaintSettings()"> Compensate brush dry-out</label></div>
+        <div class="form-row"><label>Taper Amount</label>
+          <input type="range" min="0" max="10" step="0.5" value="2" id="p-taper-mm" oninput="updatePaintVal()">
+          <span class="val" id="v-taper-mm">2</span> mm</div>
+      </div>
+      <div class="card">
+        <h3>Tray Calibration</h3>
+        <div class="btn-row">
+          <button class="primary" onclick="api('/api/paint/save_tray')">Save Tray Location</button>
+          <button onclick="api('/api/paint/save_water_dish')">Save Water Dish</button>
+          <button onclick="api('/api/paint/test_dip')">Test Dip</button>
+        </div>
+        <div style="font-size:0.78rem;color:var(--text-muted);margin-top:6px;">
+          Use the Jog pad to position the head, then save locations here.
+        </div>
+        <div id="tray-coords" style="font-size:0.78rem;margin-top:6px;"></div>
+      </div>
+    </div>
+
+    <!-- TERMINAL VIEW -->
+    <div class="bottom-view tab-content" id="view-terminal">
+      <div id="terminal-container"></div>
+    </div>
+
+    <!-- HISTORY VIEW -->
+    <div class="bottom-view tab-content" id="view-history">
+      <div class="card">
+        <h3>Plot History</h3>
+        <table class="history-table">
+          <thead><tr><th>Date</th><th>File</th><th>Profile</th><th>Layers</th><th>Duration</th><th>Distance</th><th>Dips</th><th></th></tr></thead>
+          <tbody id="history-body"></tbody>
+        </table>
+        <div id="history-empty" style="text-align:center;color:var(--text-muted);padding:20px;">No plots recorded yet</div>
+      </div>
+    </div>
+
+  </div><!-- /bottom-section -->
+</div><!-- /main -->
+
+<!-- Pen Swap Modal -->
+<div class="modal-overlay" id="swap-modal">
+  <div class="modal">
+    <h2 id="swap-title">Layer Complete</h2>
+    <div class="layer-preview" id="swap-next-info"></div>
+    <div id="swap-remaining" style="font-size:0.85rem;color:var(--text-muted);margin:12px 0;"></div>
+    <div id="swap-warning" style="display:none;color:var(--orange);font-size:0.85rem;margin:8px 0;"></div>
+    <div class="btn-row" style="margin-top:20px">
+      <button class="success" id="swap-start-btn" onclick="swapAction('start')" style="flex:1;padding:12px">Start Next Layer</button>
+      <button id="swap-skip-btn" onclick="swapAction('skip')" style="flex:1;padding:12px">Skip Next Layer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+<script>
+// ===== State =====
+let ws = null;
+let connected = false;
+let jogStep = 1;
+let activeProfile = 'Default';
+let profileData = {};
+let svgLoaded = false;
+let previewData = null;
+let term = null;
+let termWs = null;
+let plotTimer = null;
+let plotSeconds = 0;
+let swapWarningTimer = null;
+let camRecording = false;
+
+// ===== View switching =====
+function switchView(view) {
+  document.querySelectorAll('#sidebar nav a').forEach(x => x.classList.remove('active'));
+  const link = document.querySelector(`#sidebar nav a[data-tab="${view}"]`);
+  if (link) link.classList.add('active');
+
+  document.querySelectorAll('.bottom-view').forEach(v => v.classList.remove('active'));
+  const panel = document.getElementById('view-' + view);
+  if (panel) panel.classList.add('active');
+
+  if (view === 'terminal') initTerminal();
+  if (view === 'history') loadHistory();
+}
+
+document.querySelectorAll('#sidebar nav a').forEach(a => {
+  a.addEventListener('click', e => { e.preventDefault(); switchView(a.dataset.tab); });
+});
+
+// ===== WebSocket =====
+function connectWs() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'state') updateTelemetry(msg.data);
+    else if (msg.type === 'svg') applySvgPayload(msg.data);
+    else if (msg.type === 'pen_swap') showSwapModal(msg.data);
+    else if (msg.type === 'pen_swap_ack') hideSwapModal();
+    else if (msg.type === 'plot_complete') onPlotComplete(msg.data);
+    else if (msg.type === 'button') toast(msg.data.paused ? 'Paused (PRG button)' : 'Resumed (PRG button)', 'info');
+  };
+  ws.onclose = () => setTimeout(connectWs, 2000);
+}
+connectWs();
+
+function updateTelemetry(d) {
+  connected = d.connected;
+  const dot = document.getElementById('status-dot');
+  const topDot = document.getElementById('top-status-dot');
+  const txt = document.getElementById('status-text');
+  const dotClass = 'status-dot ' + (d.connected ? 'green' : 'red');
+  dot.className = dotClass;
+  topDot.className = dotClass;
+  txt.textContent = d.connected ? `Connected (${d.serial_port})` : 'Disconnected';
+  document.getElementById('connect-btn').textContent = d.connected ? 'Disconnect' : 'Connect';
+  document.getElementById('firmware-info').textContent = d.connected && d.firmware_version ? 'FW: ' + d.firmware_version : '';
+
+  document.getElementById('t-pos').textContent = `${d.current_x}, ${d.current_y}`;
+  document.getElementById('t-state').textContent = d.plot_state.charAt(0).toUpperCase() + d.plot_state.slice(1);
+  document.getElementById('t-layer').textContent = d.current_layer ?
+    `${d.current_layer} (${d.current_layer_index}/${d.total_layers})` : '—';
+  document.getElementById('t-dist').textContent = `${d.distance_plotted} mm`;
+  document.getElementById('t-sdist').textContent = `${d.session_distance} mm`;
+  document.getElementById('t-dips').textContent = d.dip_count;
+  document.getElementById('t-dips-rem').textContent = d.estimated_dips_remaining || '—';
+
+  const pct = d.total_plot_distance > 0 ? (d.distance_plotted / d.total_plot_distance * 100) : 0;
+  document.getElementById('plot-progress').style.width = pct + '%';
+  document.getElementById('progress-label').textContent =
+    `${d.distance_plotted} / ${d.total_plot_distance} mm (${Math.round(pct)}%)`;
+
+  if (d.plot_state === 'plotting' && !plotTimer) startTimer();
+  else if (d.plot_state === 'paused' && plotTimer) stopTimer();
+  else if (d.plot_state === 'idle' && plotTimer) { stopTimer(); plotSeconds = 0; }
+
+  const stateEl = document.getElementById('t-state');
+  stateEl.style.color = {idle:'var(--text-muted)',plotting:'var(--green)',
+    paused:'var(--orange)',dipping:'var(--accent)',pen_swap:'var(--purple)'}[d.plot_state] || 'var(--text)';
+}
+
+// ===== Timer =====
+function startTimer() {
+  if (plotTimer) return;
+  plotTimer = setInterval(() => {
+    plotSeconds++;
+    document.getElementById('t-elapsed').textContent = fmtTime(plotSeconds);
+  }, 1000);
+}
+function stopTimer() { clearInterval(plotTimer); plotTimer = null; }
+function fmtTime(s) {
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+  return [h,m,sec].map(v => String(v).padStart(2,'0')).join(':');
+}
+
+// ===== API helpers =====
+async function api(url, body=null) {
+  try {
+    const opts = body ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)} : {method:'POST'};
+    const r = await fetch(url, opts);
+    const d = await r.json();
+    if (d.error) { toast(d.error,'error'); return null; }
+    return d;
+  } catch(e) { toast('Request failed: '+e.message,'error'); return null; }
+}
+async function apiGet(url) {
+  try {
+    const r = await fetch(url);
+    return await r.json();
+  } catch(e) { toast('Request failed','error'); return null; }
+}
+
+// ===== Connection =====
+async function refreshPorts() {
+  const d = await apiGet('/api/ports');
+  if (!d) return;
+  const sel = document.getElementById('port-select');
+  sel.innerHTML = '<option value="">Select port...</option>';
+  (d.ports||[]).forEach(p => { const o = document.createElement('option'); o.value=p; o.textContent=p; sel.appendChild(o); });
+}
+async function toggleConnect() {
+  if (connected) {
+    const d = await api('/api/disconnect');
+    if (d && d.status === 'disconnected') {
+      connected = false;
+      document.getElementById('connect-btn').textContent = 'Connect';
+      document.getElementById('status-dot').className = 'status-dot red';
+      document.getElementById('top-status-dot').className = 'status-dot red';
+      document.getElementById('status-text').textContent = 'Disconnected';
+      document.getElementById('firmware-info').textContent = '';
+      toast('Disconnected','info');
+    }
+  } else {
+    const port = document.getElementById('port-select').value;
+    if (!port) { toast('Select a port first','error'); return; }
+    const d = await api('/api/connect', {port});
+    if (d && d.status === 'connected') {
+      document.getElementById('firmware-info').textContent = 'FW: ' + (d.firmware||'');
+      toast('Connected','success');
+    }
+  }
+}
+function saveAutoHome() {
+  api('/api/config', {auto_home_on_connect: document.getElementById('auto-home-chk').checked});
+}
+
+// ===== Jog =====
+function setStep(s) {
+  jogStep = s;
+  document.getElementById('jog-step-display').textContent = s + ' mm';
+  document.querySelectorAll('.step-sizes button').forEach(b => b.classList.toggle('active', parseFloat(b.textContent)===s));
+}
+function doJog(dx, dy) { api('/api/jog', {dx:dx*jogStep, dy:dy*jogStep}); }
+
+// ===== Model change =====
+const MODEL_DIMS = {
+  1:{name:'AxiDraw V2/V3',w:300,h:218}, 2:{name:'AxiDraw V3/A3',w:430,h:297},
+  3:{name:'AxiDraw SE/A1',w:864,h:610}, 4:{name:'AxiDraw SE/A3',w:430,h:297},
+  5:{name:'AxiDraw V3 XLX',w:585,h:218}, 7:{name:'AxiDraw MiniKit',w:160,h:101},
+};
+
+function updateBedDisplay(modelId) {
+  const m = MODEL_DIMS[+modelId];
+  if (m) document.getElementById('s-bed-display').textContent = `${m.w} × ${m.h} mm`;
+}
+
+async function onModelChange(modelId) {
+  updateBedDisplay(modelId);
+  const d = await api('/api/model/select', {model: +modelId});
+  if (d && d.ok) toast(`Model: ${d.name} (${d.width}×${d.height}mm)`, 'info');
+}
+
+// ===== Profiles =====
+async function loadProfiles() {
+  const d = await apiGet('/api/profiles');
+  if (!d) return;
+  const sel = document.getElementById('profile-select');
+  sel.innerHTML = '';
+  Object.keys(d).forEach(name => {
+    const o = document.createElement('option');
+    o.value = name; o.textContent = name;
+    if (name === activeProfile) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+async function loadProfile(name) {
+  const d = await api('/api/profiles/'+encodeURIComponent(name)+'/load');
+  if (!d || !d.profile) return;
+  activeProfile = d.name;
+  profileData = d.profile;
+  document.getElementById('profile-badge').textContent = name;
+  const sel = document.getElementById('profile-select');
+  if (sel.value !== name) sel.value = name;
+  populateSliders(d.profile);
+  populatePaintSettings(d.profile);
+}
+function populateSliders(p) {
+  const map = {
+    'speed_pendown':['s-speed-down','v-speed-down'],
+    'speed_penup':['s-speed-up','v-speed-up'],
+    'pen_pos_down':['s-pen-down','v-pen-down'],
+    'pen_pos_up':['s-pen-up','v-pen-up'],
+    'accel':['s-accel','v-accel'],
+    'pen_rate_lower':['s-rate-lower','v-rate-lower'],
+    'pen_rate_raise':['s-rate-raise','v-rate-raise'],
+  };
+  for (const [k,[sid,vid]] of Object.entries(map)) {
+    if (p[k] !== undefined) {
+      document.getElementById(sid).value = p[k];
+      document.getElementById(vid).textContent = p[k];
+    }
+  }
+  if (p.model !== undefined) {
+    document.getElementById('s-model').value = p.model;
+    updateBedDisplay(p.model);
+    api('/api/model/select', {model: +p.model});
+  }
+  if (p.const_speed !== undefined) document.getElementById('s-const-speed').checked = p.const_speed;
+}
+function populatePaintSettings(p) {
+  if (p.paint_enabled !== undefined) document.getElementById('p-enabled').checked = p.paint_enabled;
+  const pm = {
+    'dip_threshold_mm':['p-dip-thresh','v-dip-thresh'],
+    'swirl_diameter_mm':['p-swirl-d','v-swirl-d'],
+    'swirl_count':['p-swirl-n','v-swirl-n'],
+    'swirl_speed':['p-swirl-speed','v-swirl-speed'],
+    'tray_pen_down_depth':['p-tray-depth','v-tray-depth'],
+    'pressure_taper_mm':['p-taper-mm','v-taper-mm'],
+  };
+  for (const [k,[sid,vid]] of Object.entries(pm)) {
+    if (p[k] !== undefined) {
+      document.getElementById(sid).value = p[k];
+      document.getElementById(vid).textContent = p[k];
+    }
+  }
+  if (p.pressure_taper_enabled !== undefined) document.getElementById('p-taper-on').checked = p.pressure_taper_enabled;
+}
+const SLIDER_LABEL_IDS = {
+  speed_pendown: 'v-speed-down', speed_penup: 'v-speed-up', pen_pos_down: 'v-pen-down',
+  pen_pos_up: 'v-pen-up', accel: 'v-accel', pen_rate_lower: 'v-rate-lower', pen_rate_raise: 'v-rate-raise',
+};
+/** Update numeric labels while dragging — does not call the API. */
+function sliderPreview(key, val) {
+  val = parseFloat(val);
+  const vid = SLIDER_LABEL_IDS[key];
+  if (vid) document.getElementById(vid).textContent = val;
+}
+/** Send live override once when the slider value commits (release / keyboard). */
+function liveOverrideCommit(key, val) {
+  val = parseFloat(val);
+  const vid = SLIDER_LABEL_IDS[key];
+  if (vid) document.getElementById(vid).textContent = val;
+  api('/api/override', {[key]: val});
+}
+function gatherProfileData() {
+  return {
+    speed_pendown: +document.getElementById('s-speed-down').value,
+    speed_penup: +document.getElementById('s-speed-up').value,
+    pen_pos_down: +document.getElementById('s-pen-down').value,
+    pen_pos_up: +document.getElementById('s-pen-up').value,
+    accel: +document.getElementById('s-accel').value,
+    pen_rate_lower: +document.getElementById('s-rate-lower').value,
+    pen_rate_raise: +document.getElementById('s-rate-raise').value,
+    model: +document.getElementById('s-model').value,
+    const_speed: document.getElementById('s-const-speed').checked,
+    paint_enabled: document.getElementById('p-enabled').checked,
+    dip_threshold_mm: +document.getElementById('p-dip-thresh').value,
+    swirl_diameter_mm: +document.getElementById('p-swirl-d').value,
+    swirl_count: +document.getElementById('p-swirl-n').value,
+    swirl_speed: +document.getElementById('p-swirl-speed').value,
+    tray_pen_down_depth: +document.getElementById('p-tray-depth').value,
+    pressure_taper_enabled: document.getElementById('p-taper-on').checked,
+    pressure_taper_mm: +document.getElementById('p-taper-mm').value,
+  };
+}
+async function saveCurrentProfile() {
+  await api('/api/profiles/'+encodeURIComponent(activeProfile), gatherProfileData());
+  toast('Profile saved','success');
+}
+async function promptNewProfile() {
+  const name = prompt('New profile name:');
+  if (!name) return;
+  await api('/api/profiles/'+encodeURIComponent(name), gatherProfileData());
+  activeProfile = name;
+  document.getElementById('profile-badge').textContent = name;
+  await loadProfiles();
+  toast('Profile created','success');
+}
+async function deleteCurrentProfile() {
+  if (activeProfile === 'Default') { toast('Cannot delete Default profile','error'); return; }
+  if (!confirm('Delete profile "'+activeProfile+'"?')) return;
+  await fetch('/api/profiles/'+encodeURIComponent(activeProfile), {method:'DELETE'});
+  activeProfile = 'Default';
+  await loadProfiles();
+  await loadProfile('Default');
+}
+async function duplicateProfile() {
+  const name = prompt('Duplicate name:', activeProfile+'_copy');
+  if (!name) return;
+  await api('/api/profiles/'+encodeURIComponent(activeProfile)+'/duplicate', {new_name:name});
+  await loadProfiles();
+  toast('Profile duplicated','success');
+}
+
+// ===== Paint =====
+function updatePaintVal() {
+  document.getElementById('v-dip-thresh').textContent = document.getElementById('p-dip-thresh').value;
+  document.getElementById('v-swirl-d').textContent = document.getElementById('p-swirl-d').value;
+  document.getElementById('v-swirl-n').textContent = document.getElementById('p-swirl-n').value;
+  document.getElementById('v-swirl-speed').textContent = document.getElementById('p-swirl-speed').value;
+  document.getElementById('v-tray-depth').textContent = document.getElementById('p-tray-depth').value;
+  document.getElementById('v-taper-mm').textContent = document.getElementById('p-taper-mm').value;
+}
+function savePaintSettings() { saveCurrentProfile(); }
+
+// ===== SVG Upload & Preview =====
+const dropZone = document.getElementById('drop-zone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleFileUpload(e.dataTransfer.files); });
+
+function applySvgPayload(d) {
+  if (!d || !d.preview) return;
+  svgLoaded = true;
+  previewData = d.preview;
+  showSvgPreview(d.preview);
+  showSvgStats(d);
+  document.getElementById('preview-card').style.display = '';
+  document.getElementById('vpype-card').style.display = '';
+  document.getElementById('layers-card').style.display = '';
+  buildLayerList(d.preview.layers);
+}
+
+async function handleFileUpload(files) {
+  if (!files.length) return;
+  const form = new FormData();
+  form.append('file', files[0]);
+  try {
+    const r = await fetch('/api/svg/upload', {method:'POST', body:form});
+    const d = await r.json();
+    if (d.error) { toast(d.error,'error'); return; }
+    applySvgPayload(d);
+    toast('SVG loaded: '+d.preview.filename,'success');
+  } catch(e) { toast('Upload failed','error'); }
+}
+
+function showSvgStats(d) {
+  const el = document.getElementById('svg-stats');
+  el.style.display = '';
+  const p = d.preview;
+  const dips = d.estimated_dips !== undefined && d.estimated_dips !== null ? d.estimated_dips : '—';
+  const ets = d.estimated_time_s !== undefined && d.estimated_time_s !== null ? +d.estimated_time_s : 0;
+  el.innerHTML = `<strong>${p.filename}</strong> — ${p.total_paths} paths, ${p.total_distance_mm}mm, ` +
+    `${p.layers.length} layers, ~${dips} dips, ~${Math.round(ets / 60)}min`;
+}
+
+function showSvgPreview(data) {
+  const svg = document.getElementById('svg-preview');
+  const pad = 2;
+  svg.setAttribute('viewBox', `${data.min_x-pad} ${data.min_y-pad} ${data.max_x-data.min_x+pad*2} ${data.max_y-data.min_y+pad*2}`);
+  let html = `<rect x="${data.min_x-pad}" y="${data.min_y-pad}" width="${data.max_x-data.min_x+pad*2}" height="${data.max_y-data.min_y+pad*2}" fill="#1c2333"/>`;
+  html += `<rect x="${data.min_x}" y="${data.min_y}" width="${data.max_x-data.min_x}" height="${data.max_y-data.min_y}" fill="none" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="2"/>`;
+  for (const layer of data.layers) {
+    if (!layer.enabled) continue;
+    for (const path of layer.paths) {
+      if (path.points.length < 2) continue;
+      let d = 'M' + path.points.map(p => p[0]+','+p[1]).join('L');
+      html += `<path d="${d}" fill="none" stroke="${path.color || layer.color}" stroke-width="0.5" opacity="0.9"/>`;
+    }
+  }
+  svg.innerHTML = html;
+  updateTargetLayerSelect(data.layers);
+}
+
+function updateTargetLayerSelect(layers) {
+  const sel = document.getElementById('target-layer-select');
+  sel.innerHTML = '<option value="__new__">New Layer...</option>';
+  layers.forEach(l => {
+    const o = document.createElement('option');
+    o.value = l.name; o.textContent = l.name;
+    sel.appendChild(o);
+  });
+}
+
+function buildLayerList(layers) {
+  const el = document.getElementById('layer-list');
+  el.innerHTML = '';
+  layers.forEach((l,i) => {
+    const row = document.createElement('div');
+    row.className = 'layer-row';
+    row.draggable = true;
+    row.dataset.layer = l.name;
+    row.innerHTML = `
+      <input type="checkbox" ${l.enabled?'checked':''} onchange="toggleLayer('${l.name}',this.checked)">
+      <div class="layer-swatch" style="background:${l.color}"></div>
+      <span class="layer-name">${l.name}</span>
+      <span class="layer-info">${l.path_count} paths, ${l.distance_mm} mm</span>`;
+    el.appendChild(row);
+  });
+}
+function toggleLayer(name, enabled) {
+  api('/api/layers/enable', {layer:name, enabled});
+}
+
+// ===== Selection tools =====
+let selTool = 'rect';
+let selRegion = null;
+function setSelTool(tool) {
+  selTool = tool;
+  document.querySelectorAll('.selection-toolbar button').forEach(b => b.classList.remove('active'));
+  document.getElementById('sel-'+tool).classList.add('active');
+}
+
+const svgPreviewContainer = document.getElementById('svg-preview-container');
+let selStart = null;
+svgPreviewContainer.addEventListener('mousedown', e => {
+  if (selTool !== 'rect' && selTool !== 'circle') return;
+  const rect = svgPreviewContainer.getBoundingClientRect();
+  selStart = {x: e.clientX - rect.left, y: e.clientY - rect.top, rx: rect.width, ry: rect.height};
+});
+svgPreviewContainer.addEventListener('mouseup', e => {
+  if (!selStart || !previewData) return;
+  const rect = svgPreviewContainer.getBoundingClientRect();
+  const ex = e.clientX - rect.left, ey = e.clientY - rect.top;
+  const vb = document.getElementById('svg-preview').viewBox.baseVal;
+  const sx = (x) => vb.x + (x / selStart.rx) * vb.width;
+  const sy = (y) => vb.y + (y / selStart.ry) * vb.height;
+  if (selTool === 'rect') {
+    selRegion = {type:'rect', params:{x:sx(Math.min(selStart.x,ex)), y:sy(Math.min(selStart.y,ey)),
+      width:Math.abs(sx(ex)-sx(selStart.x)), height:Math.abs(sy(ey)-sy(selStart.y))}};
+  } else if (selTool === 'circle') {
+    const cx = sx((selStart.x+ex)/2), cy = sy((selStart.y+ey)/2);
+    const r = Math.max(Math.abs(sx(ex)-sx(selStart.x)), Math.abs(sy(ey)-sy(selStart.y)))/2;
+    selRegion = {type:'circle', params:{cx,cy,radius:r}};
+  }
+  selStart = null;
+});
+
+async function applySelection() {
+  if (!selRegion) { toast('Draw a selection first','error'); return; }
+  let targetLayer = document.getElementById('target-layer-select').value;
+  if (targetLayer === '__new__') {
+    targetLayer = prompt('New layer name:');
+    if (!targetLayer) return;
+  }
+  const d = await api('/api/paths/reassign', {
+    region_type: selRegion.type, region_params: selRegion.params,
+    target_layer: targetLayer, mode: 'select'
+  });
+  if (d && d.preview) {
+    previewData = d.preview;
+    showSvgPreview(d.preview);
+    buildLayerList(d.preview.layers);
+  }
+  selRegion = null;
+}
+
+async function setAsMask() {
+  if (!selRegion) { toast('Draw a selection first','error'); return; }
+  let targetLayer = document.getElementById('target-layer-select').value;
+  if (targetLayer === '__new__') { toast('Select an existing layer to mask','error'); return; }
+  
+  const d = await api('/api/layers/mask', {
+    layer: targetLayer,
+    region_type: selRegion.type,
+    region_params: selRegion.params
+  });
+  if (d && d.preview) {
+    previewData = d.preview;
+    showSvgPreview(d.preview);
+    buildLayerList(d.preview.layers);
+    toast('Mask applied to ' + targetLayer, 'success');
+  }
+  selRegion = null;
+}
+
+async function svgUndo() {
+  const d = await api('/api/svg/undo');
+  if (d && d.preview) {
+    previewData = d.preview;
+    showSvgPreview(d.preview);
+    buildLayerList(d.preview.layers);
+  }
+}
+
+// ===== vpype =====
+async function runVpype() {
+  const ops = [];
+  if (document.getElementById('vp-linemerge').checked)
+    ops.push({name:'linemerge', tolerance:+document.getElementById('vp-linemerge-tol').value});
+  if (document.getElementById('vp-linesort').checked) ops.push({name:'linesort'});
+  if (document.getElementById('vp-filter').checked)
+    ops.push({name:'filter', min_length:+document.getElementById('vp-filter-len').value});
+  if (document.getElementById('vp-splitall').checked) ops.push({name:'splitall'});
+  if (document.getElementById('vp-scaleto').checked) {
+    const m = MODEL_DIMS[+document.getElementById('s-model').value] || {w:300,h:218};
+    ops.push({name:'scaleto', width:m.w, height:m.h});
+  }
+  if (!ops.length) { toast('Select at least one operation','error'); return; }
+  toast('Running vpype...','info');
+  const d = await api('/api/svg/vpype', {operations:ops});
+  if (d && d.preview) {
+    previewData = d.preview;
+    showSvgPreview(d.preview);
+    buildLayerList(d.preview.layers);
+    const s = d.stats;
+    document.getElementById('vpype-stats').textContent =
+      `Before: ${s.before.paths}p / ${s.before.distance_mm}mm → After: ${s.after.paths}p / ${s.after.distance_mm}mm`;
+    toast('vpype complete','success');
+  }
+}
+async function toggleOptimized() {
+  const use = document.getElementById('use-optimized').checked;
+  const d = await api('/api/svg/use_optimized', {use});
+  if (d && d.preview) {
+    previewData = d.preview;
+    showSvgPreview(d.preview);
+    buildLayerList(d.preview.layers);
+  }
+}
+
+// ===== Queue =====
+async function loadQueue() {
+  const d = await apiGet('/api/queue');
+  if (!d) return;
+  renderQueue(d.queue || []);
+}
+function renderQueue(q) {
+  const el = document.getElementById('queue-list');
+  if (!q.length) { el.innerHTML = '<div style="color:var(--text-muted);font-size:0.7rem;padding:2px">Queue empty</div>'; return; }
+  el.innerHTML = '';
+  q.forEach((item,i) => {
+    const row = document.createElement('div');
+    row.className = 'queue-item';
+    row.innerHTML = `<span class="q-file">${item.filename}</span><span class="q-profile">${item.profile}</span>
+      <button onclick="removeFromQueue(${i})" style="padding:2px 6px;font-size:0.7rem">✕</button>`;
+    el.appendChild(row);
+  });
+}
+async function addToQueue() {
+  if (!svgLoaded || !previewData) { toast('Load an SVG first','error'); return; }
+  const d = await api('/api/queue/add', {filename:previewData.filename, profile:activeProfile});
+  if (d) renderQueue(d.queue);
+}
+async function removeFromQueue(idx) {
+  const d = await api('/api/queue/remove', {index:idx});
+  if (d) renderQueue(d.queue);
+}
+
+// ===== Plot Execution =====
+async function startPlot() {
+  if (!confirm('Start plot?')) return;
+  plotSeconds = 0;
+  const d = await api('/api/plot/start');
+  if (d && d.ok) toast('Plot started','success');
+}
+function pausePlot() { api('/api/plot/pause'); }
+function resumePlot() { api('/api/plot/resume'); }
+function emergencyStop() { api('/api/plot/stop'); toast('EMERGENCY STOP','error'); }
+
+function onPlotComplete(data) {
+  stopTimer();
+  if (data.dry_run) { toast('Dry run complete','info'); }
+  else { toast(`Plot complete! ${data.distance_mm}mm in ${Math.round(data.duration_s/60)} min, ${data.dip_count} dips`,'success'); }
+}
+
+// ===== Pen Swap Modal =====
+function showSwapModal(data) {
+  document.getElementById('swap-title').textContent = `Layer "${data.completed_layer}" Complete`;
+  document.getElementById('swap-next-info').innerHTML =
+    `<div class="layer-swatch" style="background:${data.next_color}"></div>` +
+    `<div><strong>Next: ${data.next_layer}</strong></div>`;
+  const rem = data.remaining_layers || [];
+  document.getElementById('swap-remaining').textContent = rem.length > 1 ?
+    `Remaining layers: ${rem.join(', ')}` : '';
+  document.getElementById('swap-start-btn').textContent = `Start Layer "${data.next_layer}"`;
+  document.getElementById('swap-skip-btn').textContent = `Skip Layer "${data.next_layer}"`;
+  document.getElementById('swap-modal').classList.add('visible');
+  document.getElementById('swap-warning').style.display = 'none';
+  clearTimeout(swapWarningTimer);
+  swapWarningTimer = setTimeout(() => {
+    document.getElementById('swap-warning').style.display = '';
+    document.getElementById('swap-warning').textContent = 'Warning: Motors may be running hot. Complete swap soon.';
+  }, 5 * 60 * 1000);
+}
+function hideSwapModal() {
+  document.getElementById('swap-modal').classList.remove('visible');
+  clearTimeout(swapWarningTimer);
+}
+function swapAction(action) {
+  api('/api/plot/pen_swap_done', {action});
+  hideSwapModal();
+}
+
+// ===== Webcam =====
+async function startWebcam() {
+  const res = document.getElementById('cam-res').value;
+  const d = await api('/api/webcam/start', {resolution:res});
+  if (d && d.ok) {
+    const feed = document.getElementById('webcam-feed');
+    feed.src = '/video_feed'; feed.style.display = '';
+    document.getElementById('cam-placeholder').style.display = 'none';
+  }
+}
+function stopWebcam() {
+  api('/api/webcam/stop');
+  document.getElementById('webcam-feed').style.display = 'none';
+  document.getElementById('webcam-feed').src = '';
+  document.getElementById('cam-placeholder').style.display = '';
+}
+async function toggleRecording() {
+  if (camRecording) {
+    await api('/api/webcam/record/stop');
+    camRecording = false;
+    document.getElementById('rec-indicator').style.display = 'none';
+    document.getElementById('rec-btn').textContent = 'Record';
+    loadRecordings();
+  } else {
+    const d = await api('/api/webcam/record/start');
+    if (d && d.ok) {
+      camRecording = true;
+      document.getElementById('rec-indicator').style.display = '';
+      document.getElementById('rec-btn').textContent = 'Stop Rec';
+    }
+  }
+}
+async function loadRecordings() {
+  const d = await apiGet('/api/webcam/recordings');
+  if (!d) return;
+  const el = document.getElementById('recordings-list');
+  const recs = d.recordings || [];
+  if (!recs.length) { el.textContent = 'No recordings yet'; return; }
+  el.innerHTML = '';
+  recs.forEach(r => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:3px 0;border-bottom:1px solid var(--border);font-size:0.72rem';
+    row.innerHTML = `<span style="flex:1">${r.filename}</span><span>${r.size_mb} MB</span>
+      <a href="/api/webcam/recordings/${r.filename}" download style="color:var(--accent)">DL</a>`;
+    el.appendChild(row);
+  });
+}
+
+// ===== Terminal =====
+function initTerminal() {
+  if (term) return;
+  term = new Terminal({theme:{background:'#0e1117',foreground:'#e6edf3',cursor:'#58a6ff'},
+    fontSize:14, fontFamily:'Consolas, monospace', cursorBlink:true});
+  term.open(document.getElementById('terminal-container'));
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  termWs = new WebSocket(`${proto}://${location.host}/ws/terminal`);
+  termWs.binaryType = 'arraybuffer';
+  termWs.onmessage = (e) => {
+    if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data));
+    else term.write(e.data);
+  };
+  termWs.onopen = () => {
+    termWs.send(JSON.stringify({type:'resize', cols:term.cols, rows:term.rows}));
+  };
+  term.onData(data => {
+    if (termWs && termWs.readyState === 1)
+      termWs.send(JSON.stringify({type:'input', data}));
+  });
+  term.onResize(({cols,rows}) => {
+    if (termWs && termWs.readyState === 1)
+      termWs.send(JSON.stringify({type:'resize', cols, rows}));
+  });
+}
+
+// ===== History =====
+async function loadHistory() {
+  const d = await apiGet('/api/history');
+  if (!d) return;
+  const plots = d.plots || [];
+  const body = document.getElementById('history-body');
+  const empty = document.getElementById('history-empty');
+  if (!plots.length) { body.innerHTML = ''; empty.style.display = ''; return; }
+  empty.style.display = 'none';
+  body.innerHTML = '';
+  plots.forEach(p => {
+    const tr = document.createElement('tr');
+    const ts = new Date(p.timestamp).toLocaleString();
+    const dur = p.duration_seconds ? Math.round(p.duration_seconds/60)+'m' : '—';
+    const layers = Array.isArray(p.layers_plotted) ? p.layers_plotted.join(', ') : (p.layers_plotted||'');
+    tr.innerHTML = `<td>${ts}</td><td>${p.filename}</td><td>${p.profile_name||'—'}</td>
+      <td>${layers}</td><td>${dur}</td><td>${p.total_distance_mm||0} mm</td><td>${p.dip_count||0}</td>
+      <td><button onclick="loadHistorySettings(${p.id})" style="padding:2px 6px;font-size:0.7rem">Load</button>
+      <button onclick="requeuePlot(${p.id})" style="padding:2px 6px;font-size:0.7rem">Re-queue</button></td>`;
+    body.appendChild(tr);
+  });
+}
+async function loadHistorySettings(id) {
+  const d = await apiGet('/api/history/'+id);
+  if (d && d.profile_data) {
+    populateSliders(d.profile_data);
+    populatePaintSettings(d.profile_data);
+    toast('Settings loaded from history','success');
+  }
+}
+async function requeuePlot(id) {
+  const d = await api('/api/history/'+id+'/requeue');
+  if (d && d.ok) { toast('File re-queued','success'); loadQueue(); }
+}
+
+// ===== Toast =====
+function toast(msg, type='info') {
+  const el = document.createElement('div');
+  el.className = 'toast '+type;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+// ===== Init =====
+(async function init() {
+  const cfg = await apiGet('/api/config');
+  if (cfg) {
+    document.getElementById('auto-home-chk').checked = cfg.auto_home_on_connect !== false;
+    if (cfg.bed_width_mm && cfg.bed_height_mm) {
+      document.getElementById('s-bed-display').textContent = `${cfg.bed_width_mm} × ${cfg.bed_height_mm} mm`;
+    }
+    if (cfg.last_serial_port) {
+      await refreshPorts();
+      document.getElementById('port-select').value = cfg.last_serial_port;
+    }
+    if (cfg.tray_x_mm != null) {
+      document.getElementById('tray-coords').textContent =
+        `Tray: (${cfg.tray_x_mm}, ${cfg.tray_y_mm})` +
+        (cfg.water_dish_x_mm != null ? ` | Water: (${cfg.water_dish_x_mm}, ${cfg.water_dish_y_mm})` : '');
+    }
+  }
+  const lastProfile = cfg?.last_profile || 'Default';
+  activeProfile = lastProfile;
+  await loadProfiles();
+  await loadProfile(lastProfile);
+  await loadQueue();
+  await refreshPorts();
+})();
+</script>
+</body>
+</html>
