@@ -555,8 +555,13 @@ class SVGProcessor:
         split_count = 0
 
         for layer in self._current.layers:
-            if layer.name == target_layer:
-                continue
+            if mode == "mask":
+                if layer.name != target_layer:
+                    continue
+            else:
+                if layer.name == target_layer:
+                    continue
+            
             new_paths = []
             for seg in layer.paths:
                 line = LineString(seg.points)
@@ -565,43 +570,56 @@ class SVGProcessor:
                         seg.layer = target_layer
                         target.paths.append(seg)
                         moved += 1
+                    elif mode == "mask":
+                        new_paths.append(seg)
                     else:
                         new_paths.append(seg)
                 elif region.intersects(line):
                     inside, outside = self._split_at_region(line, region)
-                    for part in inside:
-                        pts = list(part.coords)
-                        if len(pts) >= 2:
-                            if mode == "select":
-                                new_seg = PathSegment(
-                                    points=pts, layer=target_layer,
-                                    color=seg.color, path_id=f"{seg.path_id}_in",
-                                )
-                                target.paths.append(new_seg)
-                                moved += 1
-                            else:
+                    if mode == "mask":
+                        for part in inside:
+                            pts = list(part.coords)
+                            if len(pts) >= 2:
                                 new_paths.append(PathSegment(
                                     points=pts, layer=layer.name,
-                                    color=seg.color, path_id=f"{seg.path_id}_in",
+                                    color=seg.color, stroke_width=seg.stroke_width, path_id=f"{seg.path_id}_in",
                                 ))
-                    for part in outside:
-                        pts = list(part.coords)
-                        if len(pts) >= 2:
-                            if mode == "select":
-                                new_paths.append(PathSegment(
-                                    points=pts, layer=layer.name,
-                                    color=seg.color, path_id=f"{seg.path_id}_out",
-                                ))
-                            else:
-                                new_seg = PathSegment(
-                                    points=pts, layer=target_layer,
-                                    color=seg.color, path_id=f"{seg.path_id}_out",
-                                )
-                                target.paths.append(new_seg)
-                                moved += 1
-                    split_count += 1
+                        split_count += 1
+                    else:
+                        for part in inside:
+                            pts = list(part.coords)
+                            if len(pts) >= 2:
+                                if mode == "select":
+                                    new_seg = PathSegment(
+                                        points=pts, layer=target_layer,
+                                        color=seg.color, stroke_width=seg.stroke_width, path_id=f"{seg.path_id}_in",
+                                    )
+                                    target.paths.append(new_seg)
+                                    moved += 1
+                                else:
+                                    new_paths.append(PathSegment(
+                                        points=pts, layer=layer.name,
+                                        color=seg.color, stroke_width=seg.stroke_width, path_id=f"{seg.path_id}_in",
+                                    ))
+                        for part in outside:
+                            pts = list(part.coords)
+                            if len(pts) >= 2:
+                                if mode == "select":
+                                    new_paths.append(PathSegment(
+                                        points=pts, layer=layer.name,
+                                        color=seg.color, stroke_width=seg.stroke_width, path_id=f"{seg.path_id}_out",
+                                    ))
+                                else:
+                                    new_seg = PathSegment(
+                                        points=pts, layer=target_layer,
+                                        color=seg.color, stroke_width=seg.stroke_width, path_id=f"{seg.path_id}_out",
+                                    )
+                                    target.paths.append(new_seg)
+                                    moved += 1
+                        split_count += 1
                 else:
-                    new_paths.append(seg)
+                    if mode != "mask":
+                        new_paths.append(seg)
             layer.paths = new_paths
 
         return {"moved": moved, "split": split_count}
