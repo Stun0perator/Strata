@@ -601,7 +601,7 @@ function connectWs() {
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     if (msg.type === 'state') updateTelemetry(msg.data);
-    else if (msg.type === 'svg') applySvgPayload(msg.data);
+    else if (msg.type === 'svg_loaded') applySvgPayload(msg.data);
     else if (msg.type === 'pen_swap') showSwapModal(msg.data);
     else if (msg.type === 'pen_swap_ack') hideSwapModal();
     else if (msg.type === 'plot_complete') onPlotComplete(msg.data);

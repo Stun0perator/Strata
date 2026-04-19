@@ -468,7 +468,7 @@ async def upload_svg(file: UploadFile = File(...)):
 
     state.update(current_file=safe)
     await broadcast_message(
-        "svg",
+        "svg_loaded",
         {
             "preview": preview,
             "estimated_dips": est_dips,
