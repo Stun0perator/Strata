@@ -183,7 +183,7 @@ label { font-size:0.8rem; color:var(--text-muted); }
 @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
 
 /* tab views (paint, terminal, history) */
-.bottom-view.tab-content { padding:14px; overflow-y:auto; display:none; flex-direction:column; }
+.bottom-view.tab-content { padding:14px; overflow:visible; display:none; flex-direction:column; flex:none; }
 .bottom-view.tab-content.active { display:flex; }
 
 /* history table */
@@ -239,10 +239,14 @@ label { font-size:0.8rem; color:var(--text-muted); }
 </div>
 
 <!-- Main Area -->
-<div id="main">
+<div id="main" style="display:flex; flex-direction:row; flex:1; overflow:hidden;">
 
-  <!-- ========== TOP BAR — single compact row ========== -->
-  <div id="top-bar">
+  <!-- LEFT PANEL (65%) -->
+  <div id="left-panel" style="width:65%; overflow-y:auto; border-right:1px solid var(--border); display:flex; flex-direction:column; padding-bottom:40px;">
+    
+    <!-- HOME VIEW -->
+    <div class="bottom-view active" id="view-home" style="display:flex; flex-direction:column; padding:10px; gap:10px;">
+      <div id="top-bar">
     <span class="status-dot red" id="top-status-dot"></span>
     <select id="port-select" style="min-width:140px"><option value="">Select port...</option></select>
     <button onclick="refreshPorts()">Refresh</button>
@@ -252,20 +256,7 @@ label { font-size:0.8rem; color:var(--text-muted); }
     <span class="divider"></span>
     <span id="firmware-info" class="fw-info"></span>
   </div>
-
-  
-
-  
-  <div style="display:flex; flex:1; overflow:hidden;">
-    <!-- LEFT PANEL (50%) -->
-    <div id="left-panel" style="width:50%; overflow-y:auto; border-right:1px solid var(--border); padding-bottom:40px;">
-      
-      <!-- HOME VIEW -->
-      <div class="bottom-view active" id="view-home" style="display:none; flex-direction:column; padding:10px;">
-        
-
-    <!-- LEFT (20%): Telemetry -->
-    <div class="panel">
+      <div class="panel">
       <h3>Telemetry</h3>
       <div class="telem-grid">
         <div class="telem-item"><div class="label">Position</div><div class="value" id="t-pos">0, 0</div></div>
@@ -282,9 +273,7 @@ label { font-size:0.8rem; color:var(--text-muted); }
       </div>
       <div style="font-size:0.6rem;color:var(--text-muted);margin-top:2px" id="progress-label">0 / 0 mm</div>
     </div>
-
-    <!-- CENTER (45%): Manual Controls -->
-    <div class="panel">
+      <div class="panel">
       <h3>Manual Controls</h3>
       <div style="display:flex;gap:20px;align-items:flex-start;">
         <div>
@@ -331,9 +320,40 @@ label { font-size:0.8rem; color:var(--text-muted); }
         </div>
       </div>
     </div>
+      <div class="card">
+          <h3>SVG Upload</h3>
+          <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+            Drop SVG or click to browse
+            <input type="file" id="file-input" accept=".svg" style="display:none" onchange="handleFileUpload(this.files)">
+          </div>
+          <div id="svg-stats" style="display:none;font-size:0.72rem;margin-bottom:4px;"></div>
+          
+          <div id="file-browser" style="margin-top:0.5rem;">
+            <h4 style="font-size:0.75rem; color:var(--text); margin-bottom:4px;">Uploaded Files</h4>
+            <div id="file-list" style="max-height: 100px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; padding: 0.5rem; font-size: 0.75rem; background: var(--surface2);">
+              <span style="color: var(--text-muted);">Loading...</span>
+            </div>
+          </div>
+        </div>
+      
+      <div style="display:flex; gap:10px;">
+        <div class="card" style="margin-bottom:0;flex:1">
+            <h3>Execution</h3>
+            <div class="btn-row" style="margin-bottom:0">
+              <button class="success" onclick="startPlot()" id="btn-start" style="padding:6px 16px">START</button>
+              <button onclick="pausePlot()" id="btn-pause" style="font-size:0.75rem">PAUSE</button>
+              <button onclick="resumePlot()" id="btn-resume" style="font-size:0.75rem">RESUME</button>
+              <button class="danger" onclick="emergencyStop()" style="padding:6px 16px">E-STOP</button>
+            </div>
+          </div>
+        <div class="card" style="margin-bottom:0;flex:1" id="queue-card">
+            <h3>Plot Queue</h3>
+            <div id="queue-list" style="max-height:60px;overflow-y:auto;"></div>
+            <button onclick="addToQueue()" style="margin-top:3px;font-size:0.7rem;padding:2px 8px">Add to Queue</button>
+          </div>
+      </div>
 
-    <!-- RIGHT (35%): Plot Settings -->
-    <div class="panel">
+      <div class="panel">
       <h3>Plot Settings</h3>
       <div class="form-row" style="margin-bottom:6px">
         <select id="profile-select" onchange="loadProfile(this.value)" style="flex:1"></select>
@@ -378,43 +398,9 @@ label { font-size:0.8rem; color:var(--text-muted); }
       <div class="dim-display">Bed: <strong id="s-bed-display">300 × 218 mm</strong></div>
       <div class="form-row" style="margin-top:4px"><label><input type="checkbox" id="s-const-speed"> Constant Velocity</label></div>
     </div>
-  
 
-        <div class="card">
-          <h3>SVG Upload</h3>
-          <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
-            Drop SVG or click to browse
-            <input type="file" id="file-input" accept=".svg" style="display:none" onchange="handleFileUpload(this.files)">
-          </div>
-          <div id="svg-stats" style="display:none;font-size:0.72rem;margin-bottom:4px;"></div>
-          
-          <div id="file-browser" style="margin-top:0.5rem;">
-            <h4 style="font-size:0.75rem; color:var(--text); margin-bottom:4px;">Uploaded Files</h4>
-            <div id="file-list" style="max-height: 100px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; padding: 0.5rem; font-size: 0.75rem; background: var(--surface2);">
-              <span style="color: var(--text-muted);">Loading...</span>
-            </div>
-          </div>
-        </div>
-
-        <div style="display:flex;gap:6px;margin-bottom:6px;">
-          <div class="card" style="margin-bottom:0;flex:1">
-            <h3>Execution</h3>
-            <div class="btn-row" style="margin-bottom:0">
-              <button class="success" onclick="startPlot()" id="btn-start" style="padding:6px 16px">START</button>
-              <button onclick="pausePlot()" id="btn-pause" style="font-size:0.75rem">PAUSE</button>
-              <button onclick="resumePlot()" id="btn-resume" style="font-size:0.75rem">RESUME</button>
-              <button class="danger" onclick="emergencyStop()" style="padding:6px 16px">E-STOP</button>
-            </div>
-          </div>
-          <div class="card" style="margin-bottom:0;flex:1" id="queue-card">
-            <h3>Plot Queue</h3>
-            <div id="queue-list" style="max-height:60px;overflow-y:auto;"></div>
-            <button onclick="addToQueue()" style="margin-top:3px;font-size:0.7rem;padding:2px 8px">Add to Queue</button>
-          </div>
-        </div>
-
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-          <div class="card" id="vpype-card" style="display:none;margin-bottom:0">
+      <div style="display:flex; gap:10px;">
+        <div class="card" id="vpype-card" style="display:none;margin-bottom:0">
             <h3>vpype Optimization</h3>
             <div class="vpype-op"><input type="checkbox" id="vp-linemerge" checked><span class="op-name">linemerge</span>
               <label>tol</label><input type="number" id="vp-linemerge-tol" value="0.5" min="0.1" step="0.1"> mm</div>
@@ -430,19 +416,13 @@ label { font-size:0.8rem; color:var(--text-muted); }
             </div>
             <div id="vpype-stats" style="font-size:0.65rem;color:var(--text-muted);margin-top:3px;"></div>
           </div>
-          <div class="card" id="layers-card" style="display:none;margin-bottom:0">
+        <div class="card" id="layers-card" style="display:none;margin-bottom:0">
             <h3>Layers</h3>
             <div id="layer-list"></div>
           </div>
-        </div>
       </div>
+    </div><!-- /view-home -->
     
-      </div><!-- /view-home -->
-      
-      <!-- Paint, Terminal, History tabs will just follow here inside left-panel -->
-
-
-    <!-- PAINT MODE VIEW -->
     <div class="bottom-view tab-content" id="view-paint">
       <div class="card">
         <h3>Paint / Dip Settings</h3>
@@ -483,13 +463,9 @@ label { font-size:0.8rem; color:var(--text-muted); }
         <div id="tray-coords" style="font-size:0.78rem;margin-top:6px;"></div>
       </div>
     </div>
-
-    <!-- TERMINAL VIEW -->
     <div class="bottom-view tab-content" id="view-terminal">
       <div id="terminal-container"></div>
     </div>
-
-    <!-- HISTORY VIEW -->
     <div class="bottom-view tab-content" id="view-history">
       <div class="card">
         <h3>Plot History</h3>
@@ -501,24 +477,11 @@ label { font-size:0.8rem; color:var(--text-muted); }
       </div>
     </div>
 
-  
-    </div><!-- /left-panel -->
+  </div><!-- /left-panel -->
 
-    <!-- RIGHT PANEL (50%) -->
-    <div id="right-panel" style="width:50%; background:var(--surface2); display:flex; flex-direction:column;">
-      <div id="preview-toolbar" style="padding:10px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-        <div style="font-weight:600; font-size:0.8rem; color:var(--text); margin-right:10px;">SVG Preview</div>
-        <button id="sel-rect" class="active" onclick="setSelTool('rect')" style="font-size:0.72rem;padding:2px 6px">&#9634; Rect</button>
-        <button id="sel-circle" onclick="setSelTool('circle')" style="font-size:0.72rem;padding:2px 6px">&#9675; Circle</button>
-        <button id="sel-lasso" onclick="setSelTool('lasso')" style="font-size:0.72rem;padding:2px 6px">&#10047; Lasso</button>
-        <span style="flex:1"></span>
-        <select id="target-layer-select" style="font-size:0.72rem;padding:2px 4px"><option value="__new__">New Layer...</option></select>
-        <button onclick="applySelection()" style="font-size:0.72rem;padding:2px 6px">Apply Mask</button>
-        <button onclick="setAsMask()" style="font-size:0.72rem;padding:2px 6px">Set as Mask</button>
-        <button onclick="svgUndo()" style="font-size:0.72rem;padding:2px 6px">Undo</button>
-      </div>
-      
-      <div id="paper-settings" style="padding:6px 10px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:center; font-size:0.75rem; flex-wrap:wrap;">
+  <!-- RIGHT PANEL (35%) -->
+  <div id="right-panel" style="width:35%; background:var(--surface2); display:flex; flex-direction:column;">
+    <div id="paper-settings" style="padding:6px 10px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:center; font-size:0.75rem; flex-wrap:wrap;">
         <label>Paper Size:</label>
         <select id="paper-size" onchange="updatePaperSize()" style="font-size:0.7rem;padding:2px 4px">
             <option value="215.9,279.4">Letter (8.5x11")</option>
@@ -534,12 +497,22 @@ label { font-size:0.8rem; color:var(--text-muted); }
         <input type="range" id="svg-scale" min="10" max="300" value="100" oninput="updateSvgTransform()" style="width:80px">
         <span id="svg-scale-val">100%</span>
       </div>
-
-      <div id="svg-preview-container" style="flex:1; position:relative; overflow:auto; display:flex; align-items:center; justify-content:center; padding:20px; background:#e0e0e0;">
+    <div id="preview-toolbar" style="padding:10px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <div style="font-weight:600; font-size:0.8rem; color:var(--text); margin-right:10px;">SVG Preview</div>
+        <button id="sel-rect" class="active" onclick="setSelTool('rect')" style="font-size:0.72rem;padding:2px 6px">&#9634; Rect</button>
+        <button id="sel-circle" onclick="setSelTool('circle')" style="font-size:0.72rem;padding:2px 6px">&#9675; Circle</button>
+        <button id="sel-lasso" onclick="setSelTool('lasso')" style="font-size:0.72rem;padding:2px 6px">&#10047; Lasso</button>
+        <span style="flex:1"></span>
+        <select id="target-layer-select" style="font-size:0.72rem;padding:2px 4px"><option value="__new__">New Layer...</option></select>
+        <button onclick="applySelection()" style="font-size:0.72rem;padding:2px 6px">Apply Mask</button>
+        <button onclick="setAsMask()" style="font-size:0.72rem;padding:2px 6px">Set as Mask</button>
+        <button onclick="svgUndo()" style="font-size:0.72rem;padding:2px 6px">Undo</button>
+      </div>
+    <div id="svg-preview-container" style="flex:1; position:relative; overflow:auto; display:flex; align-items:center; justify-content:center; padding:20px; background:#e0e0e0;">
         <svg id="svg-preview" style="box-shadow: 0 4px 12px rgba(0,0,0,0.2); background:#fff; transition:transform 0.1s;" viewBox="0 0 300 218"></svg>
       </div>
-    </div><!-- /right-panel -->
-  </div><!-- /main-flex -->
+  </div><!-- /right-panel -->
+
 </div><!-- /main -->
 
 
