@@ -722,7 +722,7 @@ class SVGProcessor:
         running_distance = 0.0
 
         for layer in sorted(self._current.enabled_layers(), key=lambda l: l.order):
-                        if layer_name and layer.name != layer_name:
+            if layer_name and layer.name != layer_name:
                 continue
             instructions.append({"type": "layer_start", "layer": layer.name,
                                  "overrides": layer.overrides, "profile": layer.profile_name})
