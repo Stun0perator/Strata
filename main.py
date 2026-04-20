@@ -22,7 +22,6 @@ from config_manager import ConfigManager
 from plotter_state import PlotterState, PlotState
 from serial_manager import SerialManager, Priority
 from svg_processor import SVGProcessor
-from webcam_manager import WebcamManager
 from plot_history import PlotHistory
 from terminal_manager import TerminalManager
 
@@ -34,7 +33,6 @@ config = ConfigManager()
 state = PlotterState()
 serial_mgr = SerialManager(config, state)
 svg_proc = SVGProcessor(config)
-webcam = WebcamManager(config.get("recording_dir", "/home/pi/recordings"))
 history = PlotHistory()
 terminal = TerminalManager()
 
@@ -349,10 +347,12 @@ async def bounding_box():
 
 
 @app.post("/api/dry_run")
-async def dry_run():
+async def dry_run(request: Request):
+    body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+
     if not svg_proc.has_svg:
         return JSONResponse({"error": "No SVG loaded"}, 400)
-    asyncio.create_task(execute_plot(dry=True))
+    asyncio.create_task(execute_plot(dry=True, req_args=body))
     return {"ok": True}
 
 
@@ -681,8 +681,37 @@ async def queue_reorder(request: Request):
 
 # ---- plot execution ----
 
+
+@app.delete("/api/files/{filename}")
+async def delete_file(filename: str):
+    path = UPLOAD_DIR / filename
+    if path.exists() and path.is_file():
+        path.unlink()
+        return {"ok": True}
+    return JSONResponse({"error": "File not found"}, 404)
+
+@app.post("/api/layers/mask")
+async def layer_mask(request: Request):
+    if not svg_proc.has_svg:
+        return JSONResponse({"error": "No SVG loaded"}, 400)
+    body = await request.json()
+    layer_name = body.get("layer")
+    polygon = body.get("polygon")
+    if not layer_name or not polygon:
+        return JSONResponse({"error": "Missing layer or polygon data"}, 400)
+    
+    try:
+        svg_proc.apply_mask(layer_name, polygon)
+        await broadcast_message("svg_loaded", svg_proc.to_preview_json())
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"Mask error: {e}")
+        return JSONResponse({"error": str(e)}, 500)
+
 @app.post("/api/plot/start")
-async def start_plot():
+async def start_plot(request: Request):
+    body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+
     if not svg_proc.has_svg:
         return JSONResponse({"error": "No SVG loaded"}, 400)
     if not state.connected:
@@ -690,7 +719,7 @@ async def start_plot():
     if state.plot_state == PlotState.PLOTTING:
         return JSONResponse({"error": "Already plotting"}, 400)
     global plot_task
-    plot_task = asyncio.create_task(execute_plot(dry=False))
+    plot_task = asyncio.create_task(execute_plot(dry=False, req_args=body))
     return {"ok": True}
 
 
@@ -747,69 +776,6 @@ async def test_dip():
     return {"ok": True}
 
 
-# ---- webcam ----
-
-@app.post("/api/webcam/start")
-async def webcam_start(request: Request):
-    body = await request.json()
-    res = body.get("resolution", "720p")
-    ok = webcam.start(resolution=res)
-    return {"ok": ok}
-
-
-@app.post("/api/webcam/stop")
-async def webcam_stop():
-    webcam.stop()
-    return {"ok": True}
-
-
-@app.get("/video_feed")
-async def video_feed():
-    if not webcam.is_streaming:
-        return JSONResponse({"error": "Webcam not active"}, 503)
-    return StreamingResponse(
-        webcam.generate_mjpeg(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-        headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-@app.post("/api/webcam/record/start")
-async def start_recording():
-    fn = webcam.start_recording()
-    if fn:
-        return {"ok": True, "filename": fn}
-    return JSONResponse({"error": "Failed to start recording"}, 500)
-
-
-@app.post("/api/webcam/record/stop")
-async def stop_recording():
-    info = webcam.stop_recording()
-    return {"ok": True, **info}
-
-
-@app.get("/api/webcam/recordings")
-async def list_recordings():
-    return {"recordings": webcam.list_recordings()}
-
-
-@app.get("/api/webcam/recordings/{filename}")
-async def download_recording(filename: str):
-    path = Path(config.get("recording_dir", "/home/pi/recordings")) / filename
-    if path.exists():
-        return FileResponse(str(path), filename=filename)
-    return JSONResponse({"error": "Not found"}, 404)
-
-
-@app.post("/api/webcam/resolution")
-async def set_resolution(request: Request):
-    body = await request.json()
-    webcam.set_resolution(body.get("resolution", "720p"))
-    return {"ok": True}
 
 
 # ---- history ----
@@ -922,7 +888,7 @@ async def terminal_ws(ws: WebSocket):
 
 # ======== Plot Execution Engine ========
 
-async def execute_plot(dry: bool = False):
+async def execute_plot(dry: bool = False, req_args: dict = None):
     """Main plot execution coroutine. Streams paths to serial manager."""
     if not svg_proc.has_svg:
         return

@@ -670,7 +670,46 @@ class SVGProcessor:
 
     # ---- path generation for plotter ----
 
-    def get_plot_paths(self, dip_threshold_mm: float = 0) -> list[dict]:
+    
+    def apply_mask(self, layer_name: str, polygon_points: list[list[float]]):
+        if not self._current:
+            return
+        
+        target = None
+        for layer in self._current.layers:
+            if layer.name == layer_name:
+                target = layer
+                break
+                
+        if not target:
+            raise ValueError(f"Layer {layer_name} not found")
+            
+        poly = Polygon(polygon_points)
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+            
+        new_paths = []
+        for path in target.paths:
+            if len(path.points) < 2:
+                continue
+            ls = LineString(path.points)
+            intersection = ls.intersection(poly)
+            
+            def add_geom(geom):
+                if geom.geom_type == 'LineString':
+                    if len(geom.coords) >= 2:
+                        new_paths.append(SVGPath(list(geom.coords), path.color))
+                elif geom.geom_type == 'MultiLineString':
+                    for line in geom.geoms:
+                        if len(line.coords) >= 2:
+                            new_paths.append(SVGPath(list(line.coords), path.color))
+                            
+            add_geom(intersection)
+            
+        self._push_undo()
+        target.paths = new_paths
+
+    def get_plot_paths(self, dip_threshold_mm: float = 0, scale: float = 1.0, offset_x: float = 0.0, offset_y: float = 0.0, layer_name: str = None) -> list[dict]:
         """
         Return ordered list of move instructions for the plotter.
         Each entry: {"type": "travel"/"draw", "x": float, "y": float, "layer": str}
@@ -683,21 +722,27 @@ class SVGProcessor:
         running_distance = 0.0
 
         for layer in sorted(self._current.enabled_layers(), key=lambda l: l.order):
+                        if layer_name and layer.name != layer_name:
+                continue
             instructions.append({"type": "layer_start", "layer": layer.name,
                                  "overrides": layer.overrides, "profile": layer.profile_name})
 
             for seg in layer.paths:
                 if len(seg.points) < 2:
                     continue
+                
+                # Apply transform
+                transformed_pts = [((px * scale) + offset_x, (py * scale) + offset_y) for px, py in seg.points]
 
-                instructions.append({"type": "travel", "x": seg.points[0][0], "y": seg.points[0][1]})
+                instructions.append({"type": "travel", "x": transformed_pts[0][0], "y": transformed_pts[0][1]})
                 instructions.append({"type": "pen_down"})
 
-                for j in range(1, len(seg.points)):
-                    px, py = seg.points[j]
+                for j in range(1, len(transformed_pts)):
+                    px, py = transformed_pts[j]
                     if dip_threshold_mm > 0:
-                        ppx, ppy = seg.points[j - 1]
+                        ppx, ppy = transformed_pts[j - 1]
                         step_dist = math.hypot(px - ppx, py - ppy)
+
                         running_distance += step_dist
                         if running_distance >= dip_threshold_mm:
                             instructions.append({
