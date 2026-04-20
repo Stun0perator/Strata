@@ -936,7 +936,7 @@ async function deleteFile(filename, e) {
   }
 }
 
-function handleFileUpload(files) {
+async function handleFileUpload(files) {
   if (!files.length) return;
   const form = new FormData();
   form.append('file', files[0]);
