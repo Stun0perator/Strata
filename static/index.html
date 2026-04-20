@@ -165,7 +165,7 @@ label { font-size:0.8rem; color:var(--text-muted); }
 
 /* selection toolbar */
 .selection-toolbar { display:flex; gap:4px; margin-bottom:6px; align-items:center; }
-.selection-toolbar button.active { background:var(--accent); color:#fff; }
+#preview-toolbar button.active { background:var(--accent); color:#fff; }
 
 /* webcam column */
 .webcam-col .cam-header { padding:10px 12px; flex-shrink:0; }
@@ -1099,13 +1099,33 @@ function toggleLayer(name, enabled) {
 }
 
 
-// ===== Pan and Zoom =====
+// ===== Interactive Canvas Controls =====
+let selTool = 'pan'; // Default tool
+let selRegion = null;
 let isPanning = false;
+let isDrawing = false;
 let panStart = { x: 0, y: 0 };
 let offsetStart = { x: 0, y: 0 };
+let selStart = null;
+let lassoPoints = [];
 
-document.getElementById('svg-preview-container').addEventListener('mousedown', e => {
-  if (selTool === 'pan' || e.button === 1) { // Left click if Pan tool, or Middle click anytime
+// Initialize default tool highlighting
+document.addEventListener('DOMContentLoaded', () => {
+  setSelTool('pan');
+});
+
+function setSelTool(tool) {
+  selTool = tool;
+  document.querySelectorAll('#preview-toolbar button').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById('sel-'+tool);
+  if (btn) btn.classList.add('active');
+}
+
+const svgPreviewContainer = document.getElementById('svg-preview-container');
+
+svgPreviewContainer.addEventListener('mousedown', e => {
+  // If pan tool selected OR middle mouse clicked, start panning
+  if (selTool === 'pan' || e.button === 1) { 
     e.preventDefault();
     isPanning = true;
     panStart = { x: e.clientX, y: e.clientY };
@@ -1113,42 +1133,133 @@ document.getElementById('svg-preview-container').addEventListener('mousedown', e
       x: parseFloat(document.getElementById('svg-offset-x').value) || 0,
       y: parseFloat(document.getElementById('svg-offset-y').value) || 0
     };
-    document.getElementById('svg-preview-container').style.cursor = 'grabbing';
+    svgPreviewContainer.style.cursor = 'grabbing';
+    return;
+  }
+  
+  // If drawing tool selected and left mouse clicked, start drawing
+  if (e.button === 0 && (selTool === 'rect' || selTool === 'circle' || selTool === 'lasso')) {
+    e.preventDefault();
+    isDrawing = true;
+    const rect = svgPreviewContainer.getBoundingClientRect();
+    selStart = {x: e.clientX - rect.left, y: e.clientY - rect.top, rx: rect.width, ry: rect.height};
+    
+    // Clear previous visual shape
+    const existing = document.getElementById('sel-preview-shape');
+    if (existing) existing.remove();
+    
+    const svg = document.getElementById('svg-preview');
+    const shapeType = selTool === 'rect' ? 'rect' : selTool === 'circle' ? 'circle' : 'polyline';
+    const shape = document.createElementNS("http://www.w3.org/2000/svg", shapeType);
+    shape.id = 'sel-preview-shape';
+    shape.setAttribute('fill', 'rgba(88,166,255,0.3)');
+    shape.setAttribute('stroke', '#58a6ff');
+    shape.setAttribute('stroke-width', '1');
+    shape.setAttribute('stroke-dasharray', '4');
+    
+    if (selTool === 'lasso') {
+      lassoPoints = [{x: selStart.x, y: selStart.y}];
+      shape.setAttribute('fill', 'rgba(88,166,255,0.1)'); // lighter for lasso
+    }
+    
+    svg.appendChild(shape);
   }
 });
 
 window.addEventListener('mousemove', e => {
-  if (!isPanning) return;
-  e.preventDefault();
-  
-  // Calculate movement in SVG viewBox units
-  const container = document.getElementById('svg-preview-container');
   const svg = document.getElementById('svg-preview');
   if (!svg || !svg.viewBox.baseVal) return;
-  
-  const rect = svg.getBoundingClientRect();
   const vb = svg.viewBox.baseVal;
-  
-  // Ratio of SVG units to Screen pixels
+  const rect = svg.getBoundingClientRect();
   const ratioX = vb.width / rect.width;
   const ratioY = vb.height / rect.height;
+
+  if (isPanning) {
+    e.preventDefault();
+    const dx = (e.clientX - panStart.x) * ratioX;
+    const dy = (e.clientY - panStart.y) * ratioY;
+    document.getElementById('svg-offset-x').value = (offsetStart.x + dx).toFixed(2);
+    document.getElementById('svg-offset-y').value = (offsetStart.y + dy).toFixed(2);
+    updateSvgTransform();
+    return;
+  }
   
-  const dx = (e.clientX - panStart.x) * ratioX;
-  const dy = (e.clientY - panStart.y) * ratioY;
-  
-  document.getElementById('svg-offset-x').value = (offsetStart.x + dx).toFixed(2);
-  document.getElementById('svg-offset-y').value = (offsetStart.y + dy).toFixed(2);
-  updateSvgTransform();
+  if (isDrawing && selStart) {
+    e.preventDefault();
+    const ex = e.clientX - rect.left;
+    const ey = e.clientY - rect.top;
+    
+    const sx = (x) => vb.x + (x / rect.width) * vb.width;
+    const sy = (y) => vb.y + (y / rect.height) * vb.height;
+    
+    const shape = document.getElementById('sel-preview-shape');
+    if (!shape) return;
+    
+    if (selTool === 'rect') {
+      const x1 = sx(Math.min(selStart.x, ex));
+      const y1 = sy(Math.min(selStart.y, ey));
+      const w = Math.abs(sx(ex) - sx(selStart.x));
+      const h = Math.abs(sy(ey) - sy(selStart.y));
+      shape.setAttribute('x', x1);
+      shape.setAttribute('y', y1);
+      shape.setAttribute('width', w);
+      shape.setAttribute('height', h);
+    } else if (selTool === 'circle') {
+      const cx = sx((selStart.x + ex) / 2);
+      const cy = sy((selStart.y + ey) / 2);
+      const r = Math.max(Math.abs(sx(ex) - sx(selStart.x)), Math.abs(sy(ey) - sy(selStart.y))) / 2;
+      shape.setAttribute('cx', cx);
+      shape.setAttribute('cy', cy);
+      shape.setAttribute('r', r);
+    } else if (selTool === 'lasso') {
+      lassoPoints.push({x: ex, y: ey});
+      const pointsStr = lassoPoints.map(p => `${sx(p.x)},${sy(p.y)}`).join(' ');
+      shape.setAttribute('points', pointsStr);
+    }
+  }
 });
 
 window.addEventListener('mouseup', e => {
   if (isPanning) {
     isPanning = false;
-    document.getElementById('svg-preview-container').style.cursor = 'default';
+    svgPreviewContainer.style.cursor = 'default';
+  }
+  
+  if (isDrawing && selStart) {
+    isDrawing = false;
+    const svg = document.getElementById('svg-preview');
+    const rect = svg.getBoundingClientRect();
+    const ex = e.clientX - rect.left;
+    const ey = e.clientY - rect.top;
+    const vb = svg.viewBox.baseVal;
+    
+    const sx = (x) => vb.x + (x / rect.width) * vb.width;
+    const sy = (y) => vb.y + (y / rect.height) * vb.height;
+    
+    if (selTool === 'rect') {
+      selRegion = {
+        type: 'rect', 
+        params: {
+          x: sx(Math.min(selStart.x, ex)), 
+          y: sy(Math.min(selStart.y, ey)),
+          width: Math.abs(sx(ex) - sx(selStart.x)), 
+          height: Math.abs(sy(ey) - sy(selStart.y))
+        }
+      };
+    } else if (selTool === 'circle') {
+      const cx = sx((selStart.x + ex) / 2);
+      const cy = sy((selStart.y + ey) / 2);
+      const r = Math.max(Math.abs(sx(ex) - sx(selStart.x)), Math.abs(sy(ey) - sy(selStart.y))) / 2;
+      selRegion = {type: 'circle', params: {cx, cy, radius: r}};
+    } else if (selTool === 'lasso') {
+      const coords = lassoPoints.map(p => [sx(p.x), sy(p.y)]);
+      selRegion = {type: 'lasso', params: {points: coords}};
+    }
+    selStart = null;
   }
 });
 
-document.getElementById('svg-preview-container').addEventListener('wheel', e => {
+svgPreviewContainer.addEventListener('wheel', e => {
   e.preventDefault();
   
   const svg = document.getElementById('svg-preview');
@@ -1181,7 +1292,7 @@ document.getElementById('svg-preview-container').addEventListener('wheel', e => 
   const pathY = (paperY - oy) / s;
   
   // Determine new scale
-  const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9; // 10% zoom per tick
+  const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9; // Scroll up zooms IN
   let newScale = currentScale * zoomFactor;
   newScale = Math.max(10, Math.min(3000, newScale)); // clamp between 10% and 3000%
   const newS = newScale / 100.0;
@@ -1196,47 +1307,6 @@ document.getElementById('svg-preview-container').addEventListener('wheel', e => 
   offsetYInput.value = newOy.toFixed(2);
   
   updateSvgTransform();
-});
-
-function resetSvgView() {
-  document.getElementById('svg-scale').value = 100;
-  document.getElementById('svg-offset-x').value = 0;
-  document.getElementById('svg-offset-y').value = 0;
-  updateSvgTransform();
-}
-
-// ===== Selection tools =====
-let selTool = 'rect';
-let selRegion = null;
-function setSelTool(tool) {
-  selTool = tool;
-  document.querySelectorAll('.selection-toolbar button').forEach(b => b.classList.remove('active'));
-  document.getElementById('sel-'+tool).classList.add('active');
-}
-
-const svgPreviewContainer = document.getElementById('svg-preview-container');
-let selStart = null;
-svgPreviewContainer.addEventListener('mousedown', e => {
-  if (selTool !== 'rect' && selTool !== 'circle') return;
-  const rect = svgPreviewContainer.getBoundingClientRect();
-  selStart = {x: e.clientX - rect.left, y: e.clientY - rect.top, rx: rect.width, ry: rect.height};
-});
-svgPreviewContainer.addEventListener('mouseup', e => {
-  if (!selStart || !previewData) return;
-  const rect = svgPreviewContainer.getBoundingClientRect();
-  const ex = e.clientX - rect.left, ey = e.clientY - rect.top;
-  const vb = document.getElementById('svg-preview').viewBox.baseVal;
-  const sx = (x) => vb.x + (x / selStart.rx) * vb.width;
-  const sy = (y) => vb.y + (y / selStart.ry) * vb.height;
-  if (selTool === 'rect') {
-    selRegion = {type:'rect', params:{x:sx(Math.min(selStart.x,ex)), y:sy(Math.min(selStart.y,ey)),
-      width:Math.abs(sx(ex)-sx(selStart.x)), height:Math.abs(sy(ey)-sy(selStart.y))}};
-  } else if (selTool === 'circle') {
-    const cx = sx((selStart.x+ex)/2), cy = sy((selStart.y+ey)/2);
-    const r = Math.max(Math.abs(sx(ex)-sx(selStart.x)), Math.abs(sy(ey)-sy(selStart.y)))/2;
-    selRegion = {type:'circle', params:{cx,cy,radius:r}};
-  }
-  selStart = null;
 });
 
 async function applySelection() {
