@@ -690,22 +690,77 @@ async def delete_file(filename: str):
         return {"ok": True}
     return JSONResponse({"error": "File not found"}, 404)
 
-@app.post("/api/layers/mask")
-async def layer_mask(request: Request):
+@app.post("/api/layers/extract")
+async def layer_extract(request: Request):
+    """Extract selection region from a source layer into a new auto-named layer."""
     if not svg_proc.has_svg:
         return JSONResponse({"error": "No SVG loaded"}, 400)
     body = await request.json()
-    layer_name = body.get("layer")
-    polygon = body.get("polygon")
-    if not layer_name or not polygon:
-        return JSONResponse({"error": "Missing layer or polygon data"}, 400)
-    
+    source_layer = body.get("source_layer")
+    region_type = body.get("region_type")
+    region_params = body.get("region_params")
+    if not source_layer or not region_type or region_params is None:
+        return JSONResponse({"error": "Missing source_layer or region data"}, 400)
     try:
-        svg_proc.apply_mask(layer_name, polygon)
-        await broadcast_message("svg_loaded", svg_proc.to_preview_json())
-        return {"ok": True}
+        result = svg_proc.extract_region_to_new_layer(
+            source_layer=source_layer,
+            region_type=region_type,
+            region_params=region_params,
+        )
+        preview = svg_proc.current.to_preview_json() if svg_proc.current else None
+        if preview:
+            await broadcast_message("svg_loaded", {"preview": preview, "filename": preview.get("filename", "")})
+        return {"ok": True, "result": result, "preview": preview}
     except Exception as e:
-        logger.error(f"Mask error: {e}")
+        logger.exception("Extract error")
+        return JSONResponse({"error": str(e)}, 500)
+
+
+@app.post("/api/svg/align")
+async def svg_align(request: Request):
+    """Translate all geometry to align bounds within a given canvas size."""
+    if not svg_proc.has_svg:
+        return JSONResponse({"error": "No SVG loaded"}, 400)
+    body = await request.json()
+    mode = body.get("mode")
+    try:
+        canvas_w = float(body.get("canvas_w"))
+        canvas_h = float(body.get("canvas_h"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "Invalid canvas_w/canvas_h"}, 400)
+    if canvas_w <= 0 or canvas_h <= 0:
+        return JSONResponse({"error": "Invalid canvas size"}, 400)
+    try:
+        svg_proc.align_to_canvas(mode=mode, canvas_w=canvas_w, canvas_h=canvas_h)
+        preview = svg_proc.current.to_preview_json() if svg_proc.current else None
+        if preview:
+            await broadcast_message("svg_loaded", {"preview": preview, "filename": preview.get("filename", "")})
+        return {"ok": True, "preview": preview}
+    except Exception as e:
+        logger.exception("Align error")
+        return JSONResponse({"error": str(e)}, 500)
+
+
+@app.post("/api/svg/scale")
+async def svg_scale(request: Request):
+    """Scale all geometry about current bounds center."""
+    if not svg_proc.has_svg:
+        return JSONResponse({"error": "No SVG loaded"}, 400)
+    body = await request.json()
+    try:
+        factor = float(body.get("factor", 1.0))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "Invalid factor"}, 400)
+    if factor <= 0 or factor > 100:
+        return JSONResponse({"error": "Factor out of range"}, 400)
+    try:
+        svg_proc.scale_about_center(factor=factor)
+        preview = svg_proc.current.to_preview_json() if svg_proc.current else None
+        if preview:
+            await broadcast_message("svg_loaded", {"preview": preview, "filename": preview.get("filename", "")})
+        return {"ok": True, "preview": preview}
+    except Exception as e:
+        logger.exception("Scale error")
         return JSONResponse({"error": str(e)}, 500)
 
 @app.post("/api/plot/start")
@@ -900,10 +955,34 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
     taper_enabled = profile.get("pressure_taper_enabled", False) and paint_enabled
     taper_mm = profile.get("pressure_taper_mm", 2) if taper_enabled else 0
 
-    instructions = svg_proc.get_plot_paths(dip_threshold)
-    total_dist = svg_proc.current.total_distance()
-    total_paths = svg_proc.current.total_paths()
-    total_layers = len(svg_proc.current.enabled_layers())
+    req_args = req_args or {}
+    # layer-only plotting support
+    layer_name = req_args.get("layer_name")
+    # (legacy) transform support, in case any clients still send it
+    try:
+        scale = float(req_args.get("scale", 1.0))
+        offset_x = float(req_args.get("offset_x", 0.0))
+        offset_y = float(req_args.get("offset_y", 0.0))
+    except (TypeError, ValueError):
+        scale, offset_x, offset_y = 1.0, 0.0, 0.0
+
+    instructions = svg_proc.get_plot_paths(
+        dip_threshold_mm=dip_threshold,
+        scale=scale,
+        offset_x=offset_x,
+        offset_y=offset_y,
+        layer_name=layer_name,
+    )
+    # telemetry counts reflect enabled layers; if plotting a single layer, scope it
+    if layer_name:
+        layer_obj = next((l for l in svg_proc.current.enabled_layers() if l.name == layer_name), None) if svg_proc.current else None
+        total_dist = layer_obj.total_distance() if layer_obj else 0.0
+        total_paths = layer_obj.path_count() if layer_obj else 0
+        total_layers = 1 if layer_obj else 0
+    else:
+        total_dist = svg_proc.current.total_distance()
+        total_paths = svg_proc.current.total_paths()
+        total_layers = len(svg_proc.current.enabled_layers())
 
     state.reset_for_new_plot(total_dist, total_paths, total_layers)
     state.update(
@@ -1057,13 +1136,11 @@ if __name__ == "__main__":
 
     # webbrowser.open(f"http://localhost:{port}")
 
-    banner = (
-        "\n"
-        "─────────────────────────────────────\n"
-        "  STRATA is running at:\n"
-        f"  {url}\n"
-        "─────────────────────────────────────\n"
-    )
-    print(banner)
+    # Keep banner ASCII-only for Windows consoles.
+    banner = "\n" + "-" * 37 + "\n  STRATA is running at:\n  " + url + "\n" + "-" * 37 + "\n"
+    try:
+        print(banner)
+    except Exception:
+        print(f"\nSTRATA is running at: {url}\n")
 
     uvicorn.run(app, host="0.0.0.0", port=port)

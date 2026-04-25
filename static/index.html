@@ -20,6 +20,7 @@
   --orange: #d29922;
   --purple: #bc8cff;
   --sidebar-w: 180px;
+  --layers-panel-w: 280px;
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
@@ -142,13 +143,80 @@ label { font-size:0.8rem; color:var(--text-muted); }
   color:var(--text-muted); transition:all .2s; margin-bottom:6px; cursor:pointer; font-size:0.78rem; }
 .drop-zone:hover, .drop-zone.dragover { border-color:var(--accent); color:var(--accent); background:rgba(88,166,255,0.05); }
 
-/* layer list */
+/* layer list (legacy) */
 .layer-row { display:flex; align-items:center; gap:6px; padding:4px 8px; background:var(--surface2);
   border-radius:5px; margin-bottom:2px; cursor:grab; font-size:0.78rem; }
 .layer-row:active { cursor:grabbing; }
 .layer-swatch { width:10px; height:10px; border-radius:3px; border:1px solid var(--border); flex-shrink:0; }
 .layer-name { flex:1; font-size:0.78rem; }
 .layer-info { font-size:0.68rem; color:var(--text-muted); }
+
+/* layers panel (photoshop-ish) */
+#layers-panel {
+  width: var(--layers-panel-w);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+#layers-panel .hdr {
+  padding:10px 12px;
+  border-bottom:1px solid var(--border);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+#layers-panel .hdr h3 {
+  font-size:0.78rem;
+  font-weight:700;
+  letter-spacing:.6px;
+  color:var(--text);
+  text-transform:uppercase;
+}
+#layers-panel .list {
+  padding:8px;
+  overflow:auto;
+  flex:1;
+}
+.layer-item {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:6px 8px;
+  border-radius:8px;
+  background:var(--surface2);
+  border:1px solid transparent;
+  cursor:pointer;
+  margin-bottom:6px;
+}
+.layer-item.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(88,166,255,0.25) inset;
+}
+.layer-thumb {
+  width:54px;
+  height:40px;
+  border-radius:6px;
+  background:#fff;
+  border:1px solid rgba(0,0,0,0.15);
+  overflow:hidden;
+  flex-shrink:0;
+}
+.layer-meta { min-width:0; flex:1; }
+.layer-meta .name { font-size:0.85rem; font-weight:700; }
+.layer-meta .sub { font-size:0.68rem; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.layer-actions { display:flex; align-items:center; gap:6px; }
+.eye {
+  width:26px; height:26px;
+  display:flex; align-items:center; justify-content:center;
+  border-radius:6px;
+  border:1px solid var(--border);
+  background:transparent;
+  color:var(--text);
+  font-size:0.8rem;
+}
+.eye:hover { background: rgba(88,166,255,0.12); border-color: var(--accent); color: var(--accent); }
 
 /* vpype ops */
 .vpype-op { display:flex; align-items:center; gap:6px; padding:4px 8px; background:var(--surface2);
@@ -241,8 +309,8 @@ label { font-size:0.8rem; color:var(--text-muted); }
 <!-- Main Area -->
 <div id="main" style="display:flex; flex-direction:row; flex:1; overflow:hidden;">
 
-  <!-- LEFT PANEL (65%) -->
-  <div id="left-panel" style="width:65%; overflow-y:auto; border-right:1px solid var(--border); display:flex; flex-direction:column; padding-bottom:40px;">
+  <!-- LEFT PANEL (42%) -->
+  <div id="left-panel" style="width:42%; overflow-y:auto; border-right:1px solid var(--border); display:flex; flex-direction:column; padding-bottom:40px;">
     
     <!-- HOME VIEW -->
     <div class="bottom-view active" id="view-home" style="display:flex; flex-direction:column; padding:10px; gap:10px;">
@@ -400,7 +468,7 @@ label { font-size:0.8rem; color:var(--text-muted); }
     </div>
 
       <div style="display:flex; gap:10px;">
-        <div class="card" id="vpype-card" style="display:none;margin-bottom:0">
+        <div class="card" id="vpype-card" style="display:none;margin-bottom:0;flex:1">
             <h3>vpype Optimization</h3>
             <div class="vpype-op"><input type="checkbox" id="vp-linemerge" checked><span class="op-name">linemerge</span>
               <label>tol</label><input type="number" id="vp-linemerge-tol" value="0.5" min="0.1" step="0.1"> mm</div>
@@ -415,10 +483,6 @@ label { font-size:0.8rem; color:var(--text-muted); }
                 <input type="checkbox" id="use-optimized" onchange="toggleOptimized()"> Use optimized</label>
             </div>
             <div id="vpype-stats" style="font-size:0.65rem;color:var(--text-muted);margin-top:3px;"></div>
-          </div>
-        <div class="card" id="layers-card" style="display:none;margin-bottom:0">
-            <h3>Layers</h3>
-            <div id="layer-list"></div>
           </div>
       </div>
     </div><!-- /view-home -->
@@ -479,40 +543,56 @@ label { font-size:0.8rem; color:var(--text-muted); }
 
   </div><!-- /left-panel -->
 
-  <!-- RIGHT PANEL (35%) -->
-  <div id="right-panel" style="width:35%; background:var(--surface2); display:flex; flex-direction:column;">
-    <div id="paper-settings" style="padding:6px 10px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:center; font-size:0.75rem; flex-wrap:wrap;">
-        <label>Paper Size:</label>
-        <select id="paper-size" onchange="updatePaperSize()" style="font-size:0.7rem;padding:2px 4px">
-            <option value="215.9,279.4">Letter (8.5x11")</option>
-            <option value="210,297">A4</option>
-            <option value="297,420">A3</option>
-            <option value="custom">Custom Bed Size</option>
-        </select>
-        <label><input type="checkbox" id="paper-units" onchange="updatePaperSize()"> mm</label>
-        <span style="flex:1"></span>
-        <label>Offset X:</label><input type="number" id="svg-offset-x" value="0" style="width:50px" oninput="updateSvgTransform()">
-        <label>Y:</label><input type="number" id="svg-offset-y" value="0" style="width:50px" oninput="updateSvgTransform()">
-        <label>Scale:</label>
-        <input type="range" id="svg-scale" min="10" max="3000" value="100" oninput="updateSvgTransform()" style="width:80px">
-        <span id="svg-scale-val">100%</span>
+  <!-- RIGHT PANEL (58%) -->
+  <div id="right-panel" style="width:58%; background:var(--surface2); display:flex; flex-direction:column; overflow:hidden;">
+    <div id="paper-settings" style="padding:8px 12px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:center; font-size:0.75rem; flex-wrap:wrap;">
+      <label>Paper:</label>
+      <select id="paper-size" onchange="updatePaperSize()" style="font-size:0.72rem;padding:4px 8px">
+        <option value="215.9,279.4">Letter</option>
+        <option value="210,297">A4</option>
+        <option value="297,420">A3</option>
+        <option value="custom">Bed</option>
+      </select>
+      <span class="divider" style="height:18px;"></span>
+      <button onclick="scaleSvg(0.9)" style="font-size:0.72rem;padding:4px 10px">Scale −</button>
+      <button onclick="scaleSvg(1.1111111)" style="font-size:0.72rem;padding:4px 10px">Scale +</button>
+      <span class="divider" style="height:18px;"></span>
+      <button onclick="alignSvg('left')" style="font-size:0.72rem;padding:4px 10px">Left</button>
+      <button onclick="alignSvg('center_x')" style="font-size:0.72rem;padding:4px 10px">Center</button>
+      <button onclick="alignSvg('right')" style="font-size:0.72rem;padding:4px 10px">Right</button>
+      <button onclick="alignSvg('top')" style="font-size:0.72rem;padding:4px 10px">Top</button>
+      <button onclick="alignSvg('center_y')" style="font-size:0.72rem;padding:4px 10px">Mid</button>
+      <button onclick="alignSvg('bottom')" style="font-size:0.72rem;padding:4px 10px">Bottom</button>
+      <button onclick="alignSvg('center')" style="font-size:0.72rem;padding:4px 10px">Center Both</button>
+      <span style="flex:1"></span>
+      <div style="font-size:0.7rem;color:var(--text-muted)">Tip: wheel zooms view only</div>
+    </div>
+
+    <div id="preview-toolbar" style="padding:10px 12px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+      <div style="font-weight:700; font-size:0.8rem; color:var(--text); margin-right:10px;">Preview</div>
+      <button id="sel-pan" onclick="setSelTool('pan')" style="font-size:0.72rem;padding:4px 10px">Pan</button>
+      <button id="sel-rect" class="active" onclick="setSelTool('rect')" style="font-size:0.72rem;padding:4px 10px">Rect</button>
+      <button id="sel-circle" onclick="setSelTool('circle')" style="font-size:0.72rem;padding:4px 10px">Circle</button>
+      <button id="sel-lasso" onclick="setSelTool('lasso')" style="font-size:0.72rem;padding:4px 10px">Lasso</button>
+      <span style="flex:1"></span>
+      <button class="primary" onclick="extractSelectionToNewLayer()" style="font-size:0.72rem;padding:4px 10px">Extract to New Layer</button>
+      <button onclick="svgUndo()" style="font-size:0.72rem;padding:4px 10px">Undo</button>
+      <button onclick="resetSvgView()" style="font-size:0.72rem;padding:4px 10px">Reset View</button>
+    </div>
+
+    <div style="display:flex; flex:1; overflow:hidden;">
+      <div id="svg-preview-container" style="flex:1; position:relative; overflow:auto; display:flex; align-items:center; justify-content:center; padding:20px; background:#e0e0e0;">
+        <svg id="svg-preview" style="box-shadow: 0 4px 12px rgba(0,0,0,0.2); background:#fff;" viewBox="0 0 300 218"></svg>
       </div>
-    <div id="preview-toolbar" style="padding:10px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-        <div style="font-weight:600; font-size:0.8rem; color:var(--text); margin-right:10px;">SVG Preview</div>
-        <button id="sel-pan" onclick="setSelTool('pan')" style="font-size:0.72rem;padding:2px 6px">🖐 Pan</button>
-        <button id="sel-rect" class="active" onclick="setSelTool('rect')" style="font-size:0.72rem;padding:2px 6px">&#9634; Rect</button>
-        <button id="sel-circle" onclick="setSelTool('circle')" style="font-size:0.72rem;padding:2px 6px">&#9675; Circle</button>
-        <button id="sel-lasso" onclick="setSelTool('lasso')" style="font-size:0.72rem;padding:2px 6px">&#10047; Lasso</button>
-        <span style="flex:1"></span>
-        <select id="target-layer-select" style="font-size:0.72rem;padding:2px 4px"><option value="__new__">New Layer...</option></select>
-        <button onclick="applySelection()" style="font-size:0.72rem;padding:2px 6px">Apply Mask</button>
-        <button onclick="setAsMask()" style="font-size:0.72rem;padding:2px 6px">Set as Mask</button>
-        <button onclick="svgUndo()" style="font-size:0.72rem;padding:2px 6px">Undo</button>
-        <button onclick="resetSvgView()" style="font-size:0.72rem;padding:2px 6px">Reset</button>
+
+      <div id="layers-panel">
+        <div class="hdr">
+          <h3>Layers</h3>
+          <div style="font-size:0.72rem;color:var(--text-muted)" id="layers-hint">Click to select</div>
+        </div>
+        <div class="list" id="layers-list"></div>
       </div>
-    <div id="svg-preview-container" style="flex:1; position:relative; overflow:auto; display:flex; align-items:center; justify-content:center; padding:20px; background:#e0e0e0;">
-        <svg id="svg-preview" style="box-shadow: 0 4px 12px rgba(0,0,0,0.2); background:#fff; transition:transform 0.1s;" viewBox="0 0 300 218"></svg>
-      </div>
+    </div>
   </div><!-- /right-panel -->
 
 </div><!-- /main -->
@@ -545,6 +625,7 @@ let activeProfile = 'Default';
 let profileData = {};
 let svgLoaded = false;
 let previewData = null;
+let activeLayerName = null;
 let term = null;
 let termWs = null;
 let plotTimer = null;
@@ -888,11 +969,9 @@ function applySvgPayload(d) {
     console.log("Calling showSvgStats");
     showSvgStats(d);
     console.log("Updating display of cards");
-    document.getElementById('preview-card').style.display = '';
     document.getElementById('vpype-card').style.display = '';
-    document.getElementById('layers-card').style.display = '';
-    console.log("Calling buildLayerList");
-    buildLayerList(d.preview.layers);
+    console.log("Calling renderLayersPanel");
+    renderLayersPanel(d.preview.layers);
     console.log("applySvgPayload finished successfully");
   } catch (err) {
     console.error("Error in applySvgPayload:", err);
@@ -1011,15 +1090,9 @@ function showSvgPreview(data) {
     
     const ns = "http://www.w3.org/2000/svg";
 
-    // Build the paths group
+    // Build the paths group (geometry is already in plot coordinates)
     const g = document.createElementNS(ns, 'g');
     g.id = "svg-paths-group";
-    
-    const s = document.getElementById('svg-scale').value / 100.0;
-    const ox = document.getElementById('svg-offset-x').value || 0;
-    const oy = document.getElementById('svg-offset-y').value || 0;
-    
-    g.setAttribute('transform', `translate(${ox}, ${oy}) scale(${s})`);
     
     let pathsAdded = 0;
     for (const layer of data.layers) {
@@ -1031,7 +1104,7 @@ function showSvgPreview(data) {
           pathEl.setAttribute('d', d);
           pathEl.setAttribute('fill', 'none');
           pathEl.setAttribute('stroke', path.color || layer.color || '#000');
-          pathEl.setAttribute('stroke-width', (0.5 / Math.max(0.1, s)).toFixed(2));
+          pathEl.setAttribute('stroke-width', '0.35');
           pathEl.setAttribute('opacity', '0.9');
           g.appendChild(pathEl);
           pathsAdded++;
@@ -1042,7 +1115,9 @@ function showSvgPreview(data) {
     svg.appendChild(g);
     
     console.log(`showSvgPreview added ${pathsAdded} paths to the DOM.`);
-    updateTargetLayerSelect(data.layers);
+    if (!activeLayerName && data.layers && data.layers.length) {
+      activeLayerName = data.layers[0].name;
+    }
   } catch (err) {
     console.error("Error in showSvgPreview:", err);
   }
@@ -1052,51 +1127,79 @@ function updatePaperSize() {
     if (previewData) showSvgPreview(previewData);
 }
 
-function updateSvgTransform() {
-  const scale = parseFloat(document.getElementById('svg-scale').value) || 100;
-  document.getElementById('svg-scale-val').textContent = scale + '%';
-  const g = document.getElementById('svg-paths-group');
-  if (g) {
-    const s = scale / 100.0;
-    const ox = parseFloat(document.getElementById('svg-offset-x').value) || 0;
-    const oy = parseFloat(document.getElementById('svg-offset-y').value) || 0;
-    g.setAttribute('transform', `translate(${ox}, ${oy}) scale(${s})`);
-  }
-
-}
-function updateTargetLayerSelect(layers) {
-  const sel = document.getElementById('target-layer-select');
-  sel.innerHTML = '<option value="__new__">New Layer...</option>';
-  layers.forEach(l => {
-    const o = document.createElement('option');
-    o.value = l.name; o.textContent = l.name;
-    sel.appendChild(o);
-  });
-}
-
-function buildLayerList(layers) {
-  const el = document.getElementById('layer-list');
-  el.innerHTML = '';
-  layers.forEach((l,i) => {
-    const row = document.createElement('div');
-    row.className = 'layer-row';
-    row.draggable = true;
-    row.dataset.layer = l.name;
-    row.innerHTML = `
-      <input type="checkbox" ${l.enabled?'checked':''} onchange="toggleLayer('${l.name}',this.checked)">
-      <div class="layer-swatch" style="background:${l.color}"></div>
-      <span class="layer-name" style="flex:1;">${l.name}</span>
-      
-      <span class="layer-info">${l.path_count} paths, ${l.distance_mm} mm</span>
-      <button onclick="plotLayer('${l.name}')" style="font-size:0.65rem; padding:2px 6px; margin-left:8px;" class="success">Plot</button>`;
-
-    el.appendChild(row);
-  });
-}
 function toggleLayer(name, enabled) {
   api('/api/layers/enable', {layer:name, enabled});
 }
 
+function getPaperDims() {
+  let [pw, ph] = document.getElementById('paper-size').value.split(',').map(Number);
+  if (!pw || !ph || document.getElementById('paper-size').value === 'custom') {
+    // fall back to current preview viewBox if "Bed"
+    const svg = document.getElementById('svg-preview');
+    const vb = svg?.viewBox?.baseVal;
+    if (vb && vb.width > 0 && vb.height > 0) return {w: vb.width, h: vb.height};
+    return {w: 300, h: 218};
+  }
+  return {w: pw, h: ph};
+}
+
+function renderLayersPanel(layers) {
+  const el = document.getElementById('layers-list');
+  if (!el) return;
+  el.innerHTML = '';
+  if (!layers || !layers.length) {
+    el.innerHTML = `<div style="color:var(--text-muted);font-size:0.75rem;padding:8px;">No layers</div>`;
+    return;
+  }
+  if (!activeLayerName) activeLayerName = layers[0].name;
+
+  const paper = getPaperDims();
+  layers.forEach(l => {
+    const row = document.createElement('div');
+    row.className = 'layer-item' + (l.name === activeLayerName ? ' active' : '');
+    row.onclick = () => { activeLayerName = l.name; renderLayersPanel(layers); };
+
+    const thumbSvg = makeLayerThumbSvg(l, paper.w, paper.h);
+    row.innerHTML = `
+      <div class="layer-thumb"></div>
+      <div class="layer-meta">
+        <div class="name">Layer ${l.name}</div>
+        <div class="sub">${l.path_count} paths • ${l.distance_mm} mm</div>
+      </div>
+      <div class="layer-actions">
+        <button class="eye" title="Toggle visibility" onclick="event.stopPropagation(); toggleLayer('${l.name}', ${!l.enabled});">👁</button>
+        <button class="eye" title="Plot layer" onclick="event.stopPropagation(); plotLayer('${l.name}');">▶</button>
+      </div>
+    `;
+    row.querySelector('.layer-thumb').appendChild(thumbSvg);
+    el.appendChild(row);
+  });
+}
+
+function makeLayerThumbSvg(layer, w, h) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.setAttribute('width', '54');
+  svg.setAttribute('height', '40');
+  svg.style.display = 'block';
+  const g = document.createElementNS(ns, 'g');
+  g.setAttribute('opacity', layer.enabled ? '1' : '0.25');
+  const stroke = layer.color || '#000';
+  for (const path of (layer.paths || [])) {
+    if (!path.points || path.points.length < 2) continue;
+    const p = document.createElementNS(ns, 'path');
+    p.setAttribute('d', 'M' + path.points.map(pt => pt[0] + ',' + pt[1]).join(' L'));
+    p.setAttribute('fill', 'none');
+    p.setAttribute('stroke', path.color || stroke);
+    p.setAttribute('stroke-width', '0.45');
+    p.setAttribute('stroke-linecap', 'round');
+    p.setAttribute('stroke-linejoin', 'round');
+    g.appendChild(p);
+  }
+  svg.appendChild(g);
+  return svg;
+}
 
 // ===== Interactive Canvas Controls =====
 let selTool = 'pan'; // Default tool
@@ -1104,9 +1207,9 @@ let selRegion = null;
 let isPanning = false;
 let isDrawing = false;
 let panStart = { x: 0, y: 0 };
-let offsetStart = { x: 0, y: 0 };
 let selStart = null;
 let lassoPoints = [];
+let viewVbStart = null;
 
 // Initialize default tool highlighting
 document.addEventListener('DOMContentLoaded', () => {
@@ -1128,10 +1231,9 @@ svgPreviewContainer.addEventListener('mousedown', e => {
     e.preventDefault();
     isPanning = true;
     panStart = { x: e.clientX, y: e.clientY };
-    offsetStart = {
-      x: parseFloat(document.getElementById('svg-offset-x').value) || 0,
-      y: parseFloat(document.getElementById('svg-offset-y').value) || 0
-    };
+    const svg = document.getElementById('svg-preview');
+    const vb = svg?.viewBox?.baseVal;
+    viewVbStart = vb ? {x: vb.x, y: vb.y, w: vb.width, h: vb.height} : null;
     svgPreviewContainer.style.cursor = 'grabbing';
     return;
   }
@@ -1175,11 +1277,11 @@ window.addEventListener('mousemove', e => {
 
   if (isPanning) {
     e.preventDefault();
-    const dx = (e.clientX - panStart.x) * ratioX;
-    const dy = (e.clientY - panStart.y) * ratioY;
-    document.getElementById('svg-offset-x').value = (offsetStart.x + dx).toFixed(2);
-    document.getElementById('svg-offset-y').value = (offsetStart.y + dy).toFixed(2);
-    updateSvgTransform();
+    if (viewVbStart) {
+      const dx = (e.clientX - panStart.x) * ratioX;
+      const dy = (e.clientY - panStart.y) * ratioY;
+      svg.setAttribute('viewBox', `${(viewVbStart.x - dx).toFixed(3)} ${(viewVbStart.y - dy).toFixed(3)} ${viewVbStart.w.toFixed(3)} ${viewVbStart.h.toFixed(3)}`);
+    }
     return;
   }
   
@@ -1275,82 +1377,35 @@ svgPreviewContainer.addEventListener('wheel', e => {
   const paperX = vb.x + (mouseX / rect.width) * vb.width;
   const paperY = vb.y + (mouseY / rect.height) * vb.height;
   
-  // Current scale and offset
-  const scaleInput = document.getElementById('svg-scale');
-  let currentScale = parseFloat(scaleInput.value) || 100;
-  const s = currentScale / 100.0;
-  
-  const offsetXInput = document.getElementById('svg-offset-x');
-  const offsetYInput = document.getElementById('svg-offset-y');
-  let ox = parseFloat(offsetXInput.value) || 0;
-  let oy = parseFloat(offsetYInput.value) || 0;
-  
-  // Mouse position relative to the unscaled/untranslated paths
-  // paperX = pathX * s + ox  =>  pathX = (paperX - ox) / s
-  const pathX = (paperX - ox) / s;
-  const pathY = (paperY - oy) / s;
-  
-  // Determine new scale
-  const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9; // Scroll up zooms IN
-  let newScale = currentScale * zoomFactor;
-  newScale = Math.max(10, Math.min(3000, newScale)); // clamp between 10% and 3000%
-  const newS = newScale / 100.0;
-  
-  // Calculate new offset so that pathX/pathY remains under mouse
-  // paperX = pathX * newS + newOx  =>  newOx = paperX - pathX * newS
-  const newOx = paperX - pathX * newS;
-  const newOy = paperY - pathY * newS;
-  
-  scaleInput.value = newScale.toFixed(1);
-  offsetXInput.value = newOx.toFixed(2);
-  offsetYInput.value = newOy.toFixed(2);
-  
-  updateSvgTransform();
+  const zoomFactor = e.deltaY < 0 ? 0.9 : 1.1; // smaller viewBox => zoom in
+  const newW = Math.max(5, Math.min(50000, vb.width * zoomFactor));
+  const newH = Math.max(5, Math.min(50000, vb.height * zoomFactor));
+  const newX = paperX - (mouseX / rect.width) * newW;
+  const newY = paperY - (mouseY / rect.height) * newH;
+  svg.setAttribute('viewBox', `${newX.toFixed(3)} ${newY.toFixed(3)} ${newW.toFixed(3)} ${newH.toFixed(3)}`);
 });
 
-async function applySelection() {
+async function extractSelectionToNewLayer() {
   if (!selRegion) { toast('Draw a selection first','error'); return; }
-  let targetLayer = document.getElementById('target-layer-select').value;
-  if (targetLayer === '__new__') {
-    targetLayer = prompt('New layer name:');
-    if (!targetLayer) return;
-  }
-  const d = await api('/api/paths/reassign', {
-    region_type: selRegion.type, region_params: selRegion.params,
-    target_layer: targetLayer, mode: 'select'
+  if (!activeLayerName) { toast('Select a layer first','error'); return; }
+  const d = await api('/api/layers/extract', {
+    source_layer: activeLayerName,
+    region_type: selRegion.type,
+    region_params: selRegion.params,
   });
   if (d && d.preview) {
     previewData = d.preview;
     showSvgPreview(d.preview);
-    buildLayerList(d.preview.layers);
+    renderLayersPanel(d.preview.layers);
+    if (d.result && d.result.new_layer) {
+      activeLayerName = d.result.new_layer;
+      renderLayersPanel(d.preview.layers);
+    }
+    toast('Extracted to new layer','success');
   }
   selRegion = null;
-}
-
-async function setAsMask() {
-  const layer = document.getElementById('target-layer-select').value;
-  if (layer === '__new__' || !selRegion) return toast("Select a layer and draw a shape first", "error");
-  
-  let pts = [];
-  if (selRegion.type === 'rect') {
-    const x = selRegion.params.x, y = selRegion.params.y, w = selRegion.params.width, h = selRegion.params.height;
-    pts = [ [x, y], [x+w, y], [x+w, y+h], [x, y+h] ];
-  } else if (selRegion.type === 'circle') {
-    const cx = selRegion.params.cx, cy = selRegion.params.cy, r = selRegion.params.radius;
-    for(let i=0; i<16; i++) {
-      pts.push([cx + Math.cos(i*Math.PI/8)*r, cy + Math.sin(i*Math.PI/8)*r]);
-    }
-  } else if (selRegion.type === 'lasso') {
-    pts = selRegion.params.points;
-  }
-  
-  if (pts.length < 3) return toast("Mask shape is too small", "error");
-  
-  const d = await api('/api/layers/mask', {layer: layer, polygon: pts});
-  if (d && d.ok) {
-     toast("Mask applied!");
-     selRegion = null;
-  }
+  const existing = document.getElementById('sel-preview-shape');
+  if (existing) existing.remove();
 }
 
 function setLayerMaskFromUI(layerName) {
@@ -1369,7 +1424,7 @@ async function svgUndo() {
   if (d && d.preview) {
     previewData = d.preview;
     showSvgPreview(d.preview);
-    buildLayerList(d.preview.layers);
+    renderLayersPanel(d.preview.layers);
   }
 }
 
@@ -1392,7 +1447,7 @@ async function runVpype() {
   if (d && d.preview) {
     previewData = d.preview;
     showSvgPreview(d.preview);
-    buildLayerList(d.preview.layers);
+    renderLayersPanel(d.preview.layers);
     const s = d.stats;
     document.getElementById('vpype-stats').textContent =
       `Before: ${s.before.paths}p / ${s.before.distance_mm}mm → After: ${s.after.paths}p / ${s.after.distance_mm}mm`;
@@ -1405,7 +1460,7 @@ async function toggleOptimized() {
   if (d && d.preview) {
     previewData = d.preview;
     showSvgPreview(d.preview);
-    buildLayerList(d.preview.layers);
+    renderLayersPanel(d.preview.layers);
   }
 }
 
@@ -1440,10 +1495,7 @@ async function removeFromQueue(idx) {
 // ===== Plot Execution =====
 
 async function plotLayer(layerName) {
-  const scale = document.getElementById('svg-scale').value / 100.0;
-  const dx = document.getElementById('svg-offset-x').value || 0;
-  const dy = document.getElementById('svg-offset-y').value || 0;
-  const d = await api('/api/plot/start', {layer_name: layerName, scale: scale, offset_x: dx, offset_y: dy});
+  const d = await api('/api/plot/start', {layer_name: layerName});
   if (d && d.ok) toast(`Started plotting ${layerName}`, 'success');
 }
 
@@ -1559,6 +1611,38 @@ function toast(msg, type='info') {
   el.textContent = msg;
   document.getElementById('toast-container').appendChild(el);
   setTimeout(() => el.remove(), 4000);
+}
+
+async function alignSvg(mode) {
+  if (!previewData) return toast('Load an SVG first','error');
+  const paper = getPaperDims();
+  const d = await api('/api/svg/align', {mode, canvas_w: paper.w, canvas_h: paper.h});
+  if (d && d.preview) {
+    previewData = d.preview;
+    showSvgPreview(d.preview);
+    renderLayersPanel(d.preview.layers);
+    toast('Aligned','success');
+  }
+}
+
+async function scaleSvg(factor) {
+  if (!previewData) return toast('Load an SVG first','error');
+  const d = await api('/api/svg/scale', {factor});
+  if (d && d.preview) {
+    previewData = d.preview;
+    showSvgPreview(d.preview);
+    renderLayersPanel(d.preview.layers);
+    toast('Scaled','success');
+  }
+}
+
+function resetSvgView() {
+  if (!previewData) return;
+  const paper = getPaperDims();
+  const svg = document.getElementById('svg-preview');
+  svg.setAttribute('viewBox', `0 0 ${paper.w} ${paper.h}`);
+  const existing = document.getElementById('sel-preview-shape');
+  if (existing) existing.remove();
 }
 
 // ===== Init =====

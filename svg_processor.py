@@ -212,6 +212,9 @@ class SVGProcessor:
                 all_max_x, all_max_y = bed_w, bed_h
             width_mm, height_mm = bed_w, bed_h
 
+        # Normalize layer naming to numeric "1", "2", ... (stable order)
+        layers = self._renumber_layers_numeric(layers)
+
         svg_data = SVGData(
             layers=layers,
             width_mm=width_mm,
@@ -227,6 +230,46 @@ class SVGProcessor:
         self._current = svg_data
         self._undo_stack.clear()
         return svg_data
+
+    @staticmethod
+    def _renumber_layers_numeric(layers: list[SVGLayer]) -> list[SVGLayer]:
+        """Rename layers to '1','2',... and update PathSegment.layer accordingly."""
+        renamed: list[SVGLayer] = []
+        for idx, layer in enumerate(layers, start=1):
+            new_name = str(idx)
+            new_paths = []
+            for seg in layer.paths:
+                new_paths.append(PathSegment(
+                    points=seg.points,
+                    layer=new_name,
+                    color=seg.color,
+                    stroke_width=seg.stroke_width,
+                    path_id=seg.path_id,
+                ))
+            renamed.append(SVGLayer(
+                name=new_name,
+                color=layer.color,
+                paths=new_paths,
+                enabled=layer.enabled,
+                order=layer.order,
+                overrides=layer.overrides,
+                profile_name=layer.profile_name,
+            ))
+        # Ensure orders are 0..n-1 in the renamed list order
+        for i, l in enumerate(renamed):
+            l.order = i
+        return renamed
+
+    def _next_numeric_layer_name(self) -> str:
+        if not self._current or not self._current.layers:
+            return "1"
+        nums = []
+        for l in self._current.layers:
+            try:
+                nums.append(int(str(l.name).strip()))
+            except Exception:
+                continue
+        return str((max(nums) if nums else len(self._current.layers)) + 1)
 
     def _bed_dims_from_config(self) -> Tuple[Optional[float], Optional[float]]:
         if self._config is None:
@@ -624,6 +667,90 @@ class SVGProcessor:
 
         return {"moved": moved, "split": split_count}
 
+    def extract_region_to_new_layer(self, source_layer: str, region_type: str, region_params: dict) -> dict:
+        """
+        Extract geometry inside region from a source layer into a new auto-named layer.
+        The extracted geometry is removed from the source layer (so it won't plot twice).
+        """
+        if not self._current:
+            return {"error": "No SVG loaded"}
+
+        region = self._make_region(region_type, region_params)
+        if region is None:
+            return {"error": "Invalid region"}
+
+        src = None
+        for layer in self._current.layers:
+            if layer.name == source_layer:
+                src = layer
+                break
+        if src is None:
+            return {"error": f"Layer not found: {source_layer}"}
+
+        self._push_undo()
+
+        new_layer_name = self._next_numeric_layer_name()
+        new_layer = SVGLayer(
+            name=new_layer_name,
+            color=src.color,
+            enabled=True,
+            order=max((l.order for l in self._current.layers), default=-1) + 1,
+        )
+
+        moved = 0
+        split_count = 0
+        kept: list[PathSegment] = []
+        extracted: list[PathSegment] = []
+
+        for seg in src.paths:
+            if len(seg.points) < 2:
+                continue
+            line = LineString(seg.points)
+            if region.contains(line):
+                extracted.append(PathSegment(
+                    points=seg.points,
+                    layer=new_layer_name,
+                    color=seg.color,
+                    stroke_width=seg.stroke_width,
+                    path_id=seg.path_id,
+                ))
+                moved += 1
+                continue
+
+            if region.intersects(line):
+                inside, outside = self._split_at_region(line, region)
+                for part in outside:
+                    pts = list(part.coords)
+                    if len(pts) >= 2:
+                        kept.append(PathSegment(
+                            points=pts,
+                            layer=src.name,
+                            color=seg.color,
+                            stroke_width=seg.stroke_width,
+                            path_id=f"{seg.path_id}_out",
+                        ))
+                for part in inside:
+                    pts = list(part.coords)
+                    if len(pts) >= 2:
+                        extracted.append(PathSegment(
+                            points=pts,
+                            layer=new_layer_name,
+                            color=seg.color,
+                            stroke_width=seg.stroke_width,
+                            path_id=f"{seg.path_id}_in",
+                        ))
+                        moved += 1
+                split_count += 1
+                continue
+
+            kept.append(seg)
+
+        src.paths = kept
+        new_layer.paths = extracted
+        self._current.layers.append(new_layer)
+        self._recompute_bounds()
+        return {"new_layer": new_layer_name, "moved": moved, "split": split_count}
+
     def _make_region(self, region_type: str, params: dict) -> Optional[Polygon]:
         if region_type == "rect":
             x, y = params["x"], params["y"]
@@ -671,43 +798,77 @@ class SVGProcessor:
     # ---- path generation for plotter ----
 
     
-    def apply_mask(self, layer_name: str, polygon_points: list[list[float]]):
+    def _recompute_bounds(self) -> None:
         if not self._current:
             return
-        
-        target = None
+        all_min_x, all_min_y = float("inf"), float("inf")
+        all_max_x, all_max_y = float("-inf"), float("-inf")
         for layer in self._current.layers:
-            if layer.name == layer_name:
-                target = layer
-                break
-                
-        if not target:
-            raise ValueError(f"Layer {layer_name} not found")
-            
-        poly = Polygon(polygon_points)
-        if not poly.is_valid:
-            poly = poly.buffer(0)
-            
-        new_paths = []
-        for path in target.paths:
-            if len(path.points) < 2:
-                continue
-            ls = LineString(path.points)
-            intersection = ls.intersection(poly)
-            
-            def add_geom(geom):
-                if geom.geom_type == 'LineString':
-                    if len(geom.coords) >= 2:
-                        new_paths.append(SVGPath(list(geom.coords), path.color))
-                elif geom.geom_type == 'MultiLineString':
-                    for line in geom.geoms:
-                        if len(line.coords) >= 2:
-                            new_paths.append(SVGPath(list(line.coords), path.color))
-                            
-            add_geom(intersection)
-            
+            for seg in layer.paths:
+                for px, py in seg.points:
+                    all_min_x = min(all_min_x, px)
+                    all_min_y = min(all_min_y, py)
+                    all_max_x = max(all_max_x, px)
+                    all_max_y = max(all_max_y, py)
+        if all_min_x == float("inf"):
+            all_min_x = all_min_y = 0.0
+            all_max_x = self._current.width_mm or 0.0
+            all_max_y = self._current.height_mm or 0.0
+        self._current.min_x = all_min_x
+        self._current.min_y = all_min_y
+        self._current.max_x = all_max_x
+        self._current.max_y = all_max_y
+
+    def align_to_canvas(self, mode: str, canvas_w: float, canvas_h: float) -> None:
+        """Translate geometry so bounds align to canvas edges/centers."""
+        if not self._current:
+            return
         self._push_undo()
-        target.paths = new_paths
+        self._recompute_bounds()
+        b = self._current
+        if mode in ("left", "center_x", "right"):
+            if mode == "left":
+                dx = -b.min_x
+            elif mode == "center_x":
+                dx = (canvas_w / 2.0) - ((b.min_x + b.max_x) / 2.0)
+            else:
+                dx = canvas_w - b.max_x
+        else:
+            dx = 0.0
+
+        if mode in ("top", "center_y", "bottom"):
+            if mode == "top":
+                dy = -b.min_y
+            elif mode == "center_y":
+                dy = (canvas_h / 2.0) - ((b.min_y + b.max_y) / 2.0)
+            else:
+                dy = canvas_h - b.max_y
+        else:
+            dy = 0.0
+
+        if mode == "center":
+            dx = (canvas_w / 2.0) - ((b.min_x + b.max_x) / 2.0)
+            dy = (canvas_h / 2.0) - ((b.min_y + b.max_y) / 2.0)
+
+        if dx == 0.0 and dy == 0.0:
+            return
+        for layer in self._current.layers:
+            for seg in layer.paths:
+                seg.points = [(px + dx, py + dy) for px, py in seg.points]
+        self._recompute_bounds()
+
+    def scale_about_center(self, factor: float) -> None:
+        """Scale all points about the current bounds center."""
+        if not self._current:
+            return
+        self._push_undo()
+        self._recompute_bounds()
+        cx = (self._current.min_x + self._current.max_x) / 2.0
+        cy = (self._current.min_y + self._current.max_y) / 2.0
+        for layer in self._current.layers:
+            for seg in layer.paths:
+                seg.points = [((px - cx) * factor + cx, (py - cy) * factor + cy) for px, py in seg.points]
+        self._recompute_bounds()
 
     def get_plot_paths(self, dip_threshold_mm: float = 0, scale: float = 1.0, offset_x: float = 0.0, offset_y: float = 0.0, layer_name: str = None) -> list[dict]:
         """
