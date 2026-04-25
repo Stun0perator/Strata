@@ -546,13 +546,10 @@ label { font-size:0.8rem; color:var(--text-muted); }
   <!-- RIGHT PANEL (58%) -->
   <div id="right-panel" style="width:58%; background:var(--surface2); display:flex; flex-direction:column; overflow:hidden;">
     <div id="paper-settings" style="padding:8px 12px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:center; font-size:0.75rem; flex-wrap:wrap;">
-      <label>Paper:</label>
-      <select id="paper-size" onchange="updatePaperSize()" style="font-size:0.72rem;padding:4px 8px">
-        <option value="215.9,279.4">Letter</option>
-        <option value="210,297">A4</option>
-        <option value="297,420">A3</option>
-        <option value="custom">Bed</option>
-      </select>
+      <label>Canvas (mm):</label>
+      <input type="number" id="paper-w" min="1" step="1" value="300" style="width:74px" oninput="onPaperDimsChange()">
+      <span style="color:var(--text-muted);font-size:0.72rem;">×</span>
+      <input type="number" id="paper-h" min="1" step="1" value="218" style="width:74px" oninput="onPaperDimsChange()">
       <span class="divider" style="height:18px;"></span>
       <button onclick="scaleSvg(0.9)" style="font-size:0.72rem;padding:4px 10px">Scale −</button>
       <button onclick="scaleSvg(1.1111111)" style="font-size:0.72rem;padding:4px 10px">Scale +</button>
@@ -582,7 +579,7 @@ label { font-size:0.8rem; color:var(--text-muted); }
 
     <div style="display:flex; flex:1; overflow:hidden;">
       <div id="svg-preview-container" style="flex:1; position:relative; overflow:auto; display:flex; align-items:center; justify-content:center; padding:20px; background:#e0e0e0;">
-        <svg id="svg-preview" style="box-shadow: 0 4px 12px rgba(0,0,0,0.2); background:#fff;" viewBox="0 0 300 218"></svg>
+        <svg id="svg-preview" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;box-shadow: 0 4px 12px rgba(0,0,0,0.2); background:#fff;" viewBox="0 0 300 218"></svg>
       </div>
 
       <div id="layers-panel">
@@ -1082,11 +1079,8 @@ function showSvgPreview(data) {
       svg.removeChild(svg.firstChild);
     }
     
-    // Determine paper size
-    let [pw, ph] = document.getElementById('paper-size').value.split(',').map(Number);
-    if (!pw) { pw = 215.9; ph = 279.4; } // fallback
-    
-    svg.setAttribute('viewBox', `0 0 ${pw} ${ph}`);
+    const paper = getPaperDims();
+    svg.setAttribute('viewBox', `0 0 ${paper.w} ${paper.h}`);
     
     const ns = "http://www.w3.org/2000/svg";
 
@@ -1115,16 +1109,10 @@ function showSvgPreview(data) {
     svg.appendChild(g);
     
     console.log(`showSvgPreview added ${pathsAdded} paths to the DOM.`);
-    if (!activeLayerName && data.layers && data.layers.length) {
-      activeLayerName = data.layers[0].name;
-    }
+    if (!activeLayerName && data.layers && data.layers.length) activeLayerName = data.layers[0].name;
   } catch (err) {
     console.error("Error in showSvgPreview:", err);
   }
-}
-
-function updatePaperSize() {
-    if (previewData) showSvgPreview(previewData);
 }
 
 function toggleLayer(name, enabled) {
@@ -1132,15 +1120,9 @@ function toggleLayer(name, enabled) {
 }
 
 function getPaperDims() {
-  let [pw, ph] = document.getElementById('paper-size').value.split(',').map(Number);
-  if (!pw || !ph || document.getElementById('paper-size').value === 'custom') {
-    // fall back to current preview viewBox if "Bed"
-    const svg = document.getElementById('svg-preview');
-    const vb = svg?.viewBox?.baseVal;
-    if (vb && vb.width > 0 && vb.height > 0) return {w: vb.width, h: vb.height};
-    return {w: 300, h: 218};
-  }
-  return {w: pw, h: ph};
+  const w = parseFloat(document.getElementById('paper-w')?.value) || 300;
+  const h = parseFloat(document.getElementById('paper-h')?.value) || 218;
+  return {w: Math.max(1, w), h: Math.max(1, h)};
 }
 
 function renderLayersPanel(layers) {
@@ -1645,6 +1627,25 @@ function resetSvgView() {
   if (existing) existing.remove();
 }
 
+let paperDimsDebounce = null;
+async function onPaperDimsChange() {
+  // Keep the preview canvas reflecting actual dimensions, and keep soft limits in sync.
+  if (paperDimsDebounce) clearTimeout(paperDimsDebounce);
+  paperDimsDebounce = setTimeout(async () => {
+    const paper = getPaperDims();
+    const svg = document.getElementById('svg-preview');
+    if (svg) svg.setAttribute('viewBox', `0 0 ${paper.w} ${paper.h}`);
+
+    // Update backend bed dims so motion soft-limits match the UI dimensions.
+    await api('/api/config', {bed_width_mm: paper.w, bed_height_mm: paper.h});
+
+    if (previewData) {
+      showSvgPreview(previewData);
+      renderLayersPanel(previewData.layers);
+    }
+  }, 250);
+}
+
 // ===== Init =====
 (async function init() {
   const cfg = await apiGet('/api/config');
@@ -1652,6 +1653,10 @@ function resetSvgView() {
     document.getElementById('auto-home-chk').checked = cfg.auto_home_on_connect !== false;
     if (cfg.bed_width_mm && cfg.bed_height_mm) {
       document.getElementById('s-bed-display').textContent = `${cfg.bed_width_mm} × ${cfg.bed_height_mm} mm`;
+      const pw = document.getElementById('paper-w');
+      const ph = document.getElementById('paper-h');
+      if (pw) pw.value = cfg.bed_width_mm;
+      if (ph) ph.value = cfg.bed_height_mm;
     }
     if (cfg.last_serial_port) {
       await refreshPorts();
