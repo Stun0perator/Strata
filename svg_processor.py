@@ -19,6 +19,7 @@ from shapely.ops import split
 logger = logging.getLogger("strata.svg")
 
 SAMPLE_INTERVAL_MM = 0.5
+SAXI_PATH_JOIN_RADIUS_MM = 0.5
 
 
 @dataclass
@@ -910,6 +911,57 @@ class SVGProcessor:
                 seg.points = [(px + dx, py + dy) for px, py in seg.points]
         self._recompute_bounds()
 
+    @staticmethod
+    def _point_dist(a: tuple[float, float], b: tuple[float, float]) -> float:
+        return math.hypot(a[0] - b[0], a[1] - b[1])
+
+    def _saxi_order_and_join_paths(self, paths: list[PathSegment], join_radius: float = SAXI_PATH_JOIN_RADIUS_MM) -> list[PathSegment]:
+        """Port saxi's sortPaths + joinNearbyPaths behavior for plotting."""
+        remaining = [
+            PathSegment(
+                points=list(seg.points),
+                layer=seg.layer,
+                color=seg.color,
+                stroke_width=seg.stroke_width,
+                path_id=seg.path_id,
+            )
+            for seg in paths if len(seg.points) >= 2
+        ]
+        ordered: list[PathSegment] = []
+        cursor = (0.0, 0.0)
+
+        while remaining:
+            best_i = 0
+            best_reverse = False
+            best_dist = float("inf")
+            for i, seg in enumerate(remaining):
+                start_dist = self._point_dist(cursor, seg.points[0])
+                end_dist = self._point_dist(cursor, seg.points[-1])
+                if start_dist < best_dist:
+                    best_i, best_reverse, best_dist = i, False, start_dist
+                if end_dist < best_dist:
+                    best_i, best_reverse, best_dist = i, True, end_dist
+            seg = remaining.pop(best_i)
+            if best_reverse:
+                seg.points = list(reversed(seg.points))
+            ordered.append(seg)
+            cursor = seg.points[-1]
+
+        if not ordered:
+            return []
+
+        joined: list[PathSegment] = []
+        current = ordered[0]
+        for seg in ordered[1:]:
+            gap = self._point_dist(current.points[-1], seg.points[0])
+            if gap <= join_radius:
+                current.points.extend(seg.points[1:] if gap <= 1e-9 else seg.points)
+            else:
+                joined.append(current)
+                current = seg
+        joined.append(current)
+        return joined
+
     def get_plot_paths(self, dip_threshold_mm: float = 0, scale: float = 1.0, offset_x: float = 0.0, offset_y: float = 0.0, layer_name: str = None) -> list[dict]:
         """
         Return ordered list of move instructions for the plotter.
@@ -928,7 +980,7 @@ class SVGProcessor:
             instructions.append({"type": "layer_start", "layer": layer.name,
                                  "overrides": layer.overrides, "profile": layer.profile_name})
 
-            for seg in layer.paths:
+            for seg in self._saxi_order_and_join_paths(layer.paths):
                 if len(seg.points) < 2:
                     continue
                 

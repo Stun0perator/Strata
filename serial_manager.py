@@ -1072,10 +1072,7 @@ class SerialManager:
         profile = self._active_profile()
         with self._overrides_lock:
             o = dict(self.live_overrides)
-        const_speed = bool(o.get("const_speed", profile.get("const_speed", False)))
         speed = self._speed_mm_s_for_tag("draw")
-        if const_speed or speed > 100.0:
-            return self._draw_path_constant_rate(clean_points, priority)
 
         accel = self._accel_mm_s2()
         blocks = self._plan_path_blocks(clean_points, accel=accel, max_vel=speed)
@@ -1095,17 +1092,6 @@ class SerialManager:
         end_x, end_y = clean_points[-1]
         self.state.update(current_x=end_x, current_y=end_y)
         self.state.add_distance(distance)
-        return True
-
-    def _draw_path_constant_rate(self, points, priority: Priority = Priority.STREAM) -> bool:
-        for x, y in points[1:]:
-            if not self.move_to_and_draw_stream(x, y, priority):
-                return False
-        if not self.wait_motion_sync(priority):
-            return False
-
-        end_x, end_y = points[-1]
-        self.state.update(current_x=end_x, current_y=end_y)
         return True
 
     def _check_soft_limits(self, x: float, y: float) -> Optional[str]:
