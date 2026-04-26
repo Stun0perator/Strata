@@ -1068,6 +1068,10 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, fn, x, y)
 
+    async def run_serial(fn, *args) -> bool:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, fn, *args)
+
     async def wait_for_streamed_motion() -> bool:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, serial_mgr.wait_motion_sync)
@@ -1144,13 +1148,22 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
                     offset = taper_mm * (state.session_distance / dip_threshold)
                     base = profile.get("pen_pos_down", 40)
                     serial_mgr.set_live_override("pen_pos_down", base - offset)
-                serial_mgr.pen_down()
+                motion_failed = not await run_serial(serial_mgr.pen_down_sync)
 
         elif itype == "pen_up":
             if not dry:
-                serial_mgr.pen_up()
+                motion_failed = not await run_serial(serial_mgr.pen_up_sync)
             path_idx += 1
             state.update(current_path_index=path_idx)
+
+        elif itype == "draw_path":
+            if dry:
+                for px, py in instr["points"][1:]:
+                    motion_failed = not await run_motion(serial_mgr.rapid_move_sync, px, py)
+                    if motion_failed:
+                        break
+            else:
+                motion_failed = not await run_serial(serial_mgr.draw_path_sync, instr["points"])
 
         elif itype == "draw":
             if dry:

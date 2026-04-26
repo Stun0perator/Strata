@@ -36,6 +36,8 @@ MAX_ACCEL_MM_S2 = 800.0
 
 # EBB rate scale (saxi ebb.ts)
 _LM_RATE_SCALE = 0x80000000 / 25000.0
+PLANNER_EPSILON = 1e-9
+SAXI_CORNER_FACTOR_MM = 0.127
 
 DEFAULT_PEN_MOTION_MS = 120
 
@@ -95,6 +97,8 @@ class SerialManager:
         self._commanded_x: float = 0.0
         self._commanded_y: float = 0.0
         self._stream_motion_error = False
+        self._step_error_x: float = 0.0
+        self._step_error_y: float = 0.0
 
     # ---- ports ----
 
@@ -331,6 +335,13 @@ class SerialManager:
     def _pct_to_speed_mm_s(self, pct: float) -> float:
         return max(1.0, (pct / 100.0) * MAX_SPEED_MM_S)
 
+    def _accel_mm_s2(self) -> float:
+        profile = self._active_profile()
+        with self._overrides_lock:
+            o = dict(self.live_overrides)
+        pct = float(o.get("accel", profile.get("accel", 75)))
+        return max(20.0, (pct / 100.0) * 400.0)
+
     def _speed_mm_s_for_tag(self, tag: str, swirl_sp: Optional[float] = None) -> float:
         profile = self._active_profile()
         with self._overrides_lock:
@@ -419,6 +430,173 @@ class SerialManager:
             return True
         logger.warning("LM unclear response %r — XM fallback", resp)
         return False
+
+    @staticmethod
+    def _vsub(a: tuple[float, float], b: tuple[float, float]) -> tuple[float, float]:
+        return a[0] - b[0], a[1] - b[1]
+
+    @staticmethod
+    def _vadd(a: tuple[float, float], b: tuple[float, float]) -> tuple[float, float]:
+        return a[0] + b[0], a[1] + b[1]
+
+    @staticmethod
+    def _vmul(a: tuple[float, float], s: float) -> tuple[float, float]:
+        return a[0] * s, a[1] * s
+
+    @staticmethod
+    def _vlen(a: tuple[float, float]) -> float:
+        return math.hypot(a[0], a[1])
+
+    def _vnorm(self, a: tuple[float, float]) -> tuple[float, float]:
+        length = self._vlen(a)
+        if length <= PLANNER_EPSILON:
+            return 0.0, 0.0
+        return a[0] / length, a[1] / length
+
+    @staticmethod
+    def _vdot(a: tuple[float, float], b: tuple[float, float]) -> float:
+        return a[0] * b[0] + a[1] * b[1]
+
+    def _corner_velocity(self, seg1, seg2, max_vel: float, accel: float, corner_factor: float) -> float:
+        d1 = self._vnorm(self._vsub(seg1[1], seg1[0]))
+        d2 = self._vnorm(self._vsub(seg2[1], seg2[0]))
+        cosine = -self._vdot(d1, d2)
+        if abs(cosine - 1.0) < PLANNER_EPSILON:
+            return 0.0
+        sine = math.sqrt(max(0.0, (1.0 - cosine) / 2.0))
+        if abs(sine - 1.0) < PLANNER_EPSILON:
+            return max_vel
+        vel = math.sqrt(max(0.0, (accel * corner_factor * sine) / max(PLANNER_EPSILON, 1.0 - sine)))
+        return min(vel, max_vel)
+
+    def _compute_triangle(self, distance, initial_vel, final_vel, accel, p1, p3):
+        s1 = (2.0 * accel * distance + final_vel * final_vel - initial_vel * initial_vel) / (4.0 * accel)
+        s2 = distance - s1
+        v_max = math.sqrt(max(0.0, initial_vel * initial_vel + 2.0 * accel * s1))
+        t1 = (v_max - initial_vel) / accel
+        t2 = (final_vel - v_max) / -accel
+        direction = self._vnorm(self._vsub(p3, p1))
+        p2 = self._vadd(p1, self._vmul(direction, s1))
+        return s1, s2, t1, t2, v_max, p1, p2, p3
+
+    def _compute_trapezoid(self, distance, initial_vel, max_vel, final_vel, accel, p1, p4):
+        t1 = (max_vel - initial_vel) / accel
+        s1 = ((max_vel + initial_vel) / 2.0) * t1
+        t3 = (final_vel - max_vel) / -accel
+        s3 = ((final_vel + max_vel) / 2.0) * t3
+        s2 = distance - s1 - s3
+        t2 = s2 / max_vel
+        direction = self._vnorm(self._vsub(p4, p1))
+        p2 = self._vadd(p1, self._vmul(direction, s1))
+        p3 = self._vadd(p1, self._vmul(direction, distance - s3))
+        return t1, t2, t3, p1, p2, p3, p4
+
+    def _plan_path_blocks(self, points, accel: float, max_vel: float, corner_factor: float = SAXI_CORNER_FACTOR_MM):
+        deduped = []
+        for p in points:
+            pt = (float(p[0]), float(p[1]))
+            if not deduped or self._vlen(self._vsub(pt, deduped[-1])) > PLANNER_EPSILON:
+                deduped.append(pt)
+        if len(deduped) < 2:
+            return []
+
+        segments = [{"p1": deduped[i], "p2": deduped[i + 1], "max_entry": 0.0, "entry": 0.0, "blocks": []}
+                    for i in range(len(deduped) - 1)]
+        for i in range(1, len(segments)):
+            segments[i]["max_entry"] = self._corner_velocity(
+                (segments[i - 1]["p1"], segments[i - 1]["p2"]),
+                (segments[i]["p1"], segments[i]["p2"]),
+                max_vel,
+                accel,
+                corner_factor,
+            )
+
+        last = deduped[-1]
+        segments.append({"p1": last, "p2": last, "max_entry": 0.0, "entry": 0.0, "blocks": []})
+
+        i = 0
+        while i < len(segments) - 1:
+            seg = segments[i]
+            next_seg = segments[i + 1]
+            distance = self._vlen(self._vsub(seg["p2"], seg["p1"]))
+            if distance <= PLANNER_EPSILON:
+                i += 1
+                continue
+            v_initial = seg["entry"]
+            v_exit = next_seg["max_entry"]
+            s1, s2, t1, t2, tri_vmax, p1, p2, p3 = self._compute_triangle(distance, v_initial, v_exit, accel, seg["p1"], seg["p2"])
+            if s1 < -PLANNER_EPSILON:
+                seg["max_entry"] = math.sqrt(max(0.0, v_exit * v_exit + 2.0 * accel * distance))
+                i = max(0, i - 1)
+            elif s2 <= 0:
+                v_final = math.sqrt(max(0.0, v_initial * v_initial + 2.0 * accel * distance))
+                t = (v_final - v_initial) / accel
+                seg["blocks"] = [(accel, t, v_initial, seg["p1"], seg["p2"])]
+                next_seg["entry"] = v_final
+                i += 1
+            elif tri_vmax > max_vel:
+                zt1, zt2, zt3, zp1, zp2, zp3, zp4 = self._compute_trapezoid(distance, v_initial, max_vel, v_exit, accel, seg["p1"], seg["p2"])
+                seg["blocks"] = [
+                    (accel, zt1, v_initial, zp1, zp2),
+                    (0.0, zt2, max_vel, zp2, zp3),
+                    (-accel, zt3, max_vel, zp3, zp4),
+                ]
+                next_seg["entry"] = v_exit
+                i += 1
+            else:
+                seg["blocks"] = [
+                    (accel, t1, v_initial, p1, p2),
+                    (-accel, t2, tri_vmax, p2, p3),
+                ]
+                next_seg["entry"] = v_exit
+                i += 1
+
+        return [b for seg in segments for b in seg["blocks"] if b[1] > PLANNER_EPSILON]
+
+    def _modf_floor(self, value: float) -> tuple[float, int]:
+        steps = math.floor(value)
+        return value - steps, int(steps)
+
+    def _execute_lm_block(self, block) -> bool:
+        accel, duration, v_initial, p1, p2 = block
+        err_x, steps_x = self._modf_floor((p2[0] - p1[0]) * MICROSTEPS_PER_MM + self._step_error_x)
+        err_y, steps_y = self._modf_floor((p2[1] - p1[1]) * MICROSTEPS_PER_MM + self._step_error_y)
+        self._step_error_x = err_x
+        self._step_error_y = err_y
+        if steps_x == 0 and steps_y == 0:
+            return True
+        return self._try_lm_move_steps(
+            steps_x,
+            steps_y,
+            v_initial * MICROSTEPS_PER_MM,
+            max(0.0, (v_initial + accel * duration) * MICROSTEPS_PER_MM),
+        )
+
+    def _try_lm_move_steps(self, x_steps: int, y_steps: int, initial_rate: float, final_rate: float) -> bool:
+        if not self._ebb_lm_capable:
+            speed_mm_s = max(1.0, max(initial_rate, final_rate) / MICROSTEPS_PER_MM)
+            return self._xm_move(x_steps / MICROSTEPS_PER_MM, y_steps / MICROSTEPS_PER_MM, speed_mm_s)
+        norm = math.hypot(x_steps, y_steps)
+        if norm == 0:
+            return True
+        norm_x = x_steps / norm
+        norm_y = y_steps / norm
+        initial_rate_x = initial_rate * norm_x
+        initial_rate_y = initial_rate * norm_y
+        final_rate_x = final_rate * norm_x
+        final_rate_y = final_rate * norm_y
+        steps_axis1 = x_steps + y_steps
+        steps_axis2 = x_steps - y_steps
+        ir1, dr1 = self._lm_axis_rates(steps_axis1, abs(initial_rate_x + initial_rate_y), abs(final_rate_x + final_rate_y))
+        ir2, dr2 = self._lm_axis_rates(steps_axis2, abs(initial_rate_x - initial_rate_y), abs(final_rate_x - final_rate_y))
+        lm = f"LM,{ir1},{steps_axis1},{dr1},{ir2},{steps_axis2},{dr2}"
+        with self._serial_lock:
+            resp = self._exchange(lm, read_timeout=2.0)
+        rlow = resp.lower()
+        if "!" in resp or "err" in rlow:
+            logger.warning("LM rejected: %r", resp)
+            return False
+        return True
 
     def _xm_move(self, dx_mm: float, dy_mm: float, speed_mm_s: float) -> bool:
         sx, sy = self._microsteps_xy(dx_mm, dy_mm)
@@ -727,6 +905,18 @@ class SerialManager:
         self.enqueue("_py:pendown", Priority.MANUAL, tag="pen_down")
         self.state.update(pen_is_down=True)
 
+    def pen_up_sync(self) -> bool:
+        ok = self.enqueue_wait("_py:penup", Priority.MANUAL, tag="pen_up")
+        if ok:
+            self.state.update(pen_is_down=False)
+        return ok
+
+    def pen_down_sync(self) -> bool:
+        ok = self.enqueue_wait("_py:pendown", Priority.MANUAL, tag="pen_down")
+        if ok:
+            self.state.update(pen_is_down=True)
+        return ok
+
     def pen_toggle(self):
         if self.state.pen_is_down:
             self.pen_up()
@@ -863,6 +1053,39 @@ class SerialManager:
 
     def wait_motion_sync(self, priority: Priority = Priority.STREAM) -> bool:
         return self.enqueue_wait("_py:wait_motion", priority, tag="wait_motion")
+
+    def draw_path_sync(self, points, priority: Priority = Priority.STREAM) -> bool:
+        clean_points = [(float(p[0]), float(p[1])) for p in points]
+        if len(clean_points) < 2:
+            return True
+        for x, y in clean_points:
+            err = self._check_soft_limits(x, y)
+            if err:
+                logger.warning("Soft limit: %s", err)
+                if self.on_error:
+                    self.on_error(err)
+                return False
+
+        speed = self._speed_mm_s_for_tag("draw")
+        accel = self._accel_mm_s2()
+        blocks = self._plan_path_blocks(clean_points, accel=accel, max_vel=speed)
+        if not blocks:
+            return True
+
+        distance = 0.0
+        for idx in range(1, len(clean_points)):
+            distance += math.hypot(clean_points[idx][0] - clean_points[idx - 1][0], clean_points[idx][1] - clean_points[idx - 1][1])
+
+        for block in blocks:
+            if not self._execute_lm_block(block):
+                return False
+        if not self._wait_motion_complete():
+            return False
+
+        end_x, end_y = clean_points[-1]
+        self.state.update(current_x=end_x, current_y=end_y)
+        self.state.add_distance(distance)
+        return True
 
     def _check_soft_limits(self, x: float, y: float) -> Optional[str]:
         try:

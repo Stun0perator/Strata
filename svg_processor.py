@@ -926,9 +926,9 @@ class SVGProcessor:
                 instructions.append({"type": "travel", "x": transformed_pts[0][0], "y": transformed_pts[0][1]})
                 instructions.append({"type": "pen_down"})
 
-                for j in range(1, len(transformed_pts)):
-                    px, py = transformed_pts[j]
-                    if dip_threshold_mm > 0:
+                if dip_threshold_mm > 0:
+                    for j in range(1, len(transformed_pts)):
+                        px, py = transformed_pts[j]
                         ppx, ppy = transformed_pts[j - 1]
                         step_dist = math.hypot(px - ppx, py - ppy)
 
@@ -940,7 +940,9 @@ class SVGProcessor:
                                 "return_y": py,
                             })
                             running_distance = 0.0
-                    instructions.append({"type": "draw", "x": px, "y": py})
+                        instructions.append({"type": "draw", "x": px, "y": py})
+                else:
+                    instructions.append({"type": "draw_path", "points": transformed_pts})
 
                 instructions.append({"type": "pen_up"})
 
