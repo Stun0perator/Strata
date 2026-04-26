@@ -1232,6 +1232,7 @@ let panStart = { x: 0, y: 0 };
 let selStart = null;
 let lassoPoints = [];
 let viewVbStart = null;
+let skew = { active: false, corners: null, handleIdx: -1 };
 
 // Initialize default tool highlighting
 document.addEventListener('DOMContentLoaded', () => {
@@ -1264,14 +1265,15 @@ svgPreviewContainer.addEventListener('mousedown', e => {
   if (e.button === 0 && (selTool === 'rect' || selTool === 'circle' || selTool === 'lasso')) {
     e.preventDefault();
     isDrawing = true;
-    const rect = svgPreviewContainer.getBoundingClientRect();
-    selStart = {x: e.clientX - rect.left, y: e.clientY - rect.top, rx: rect.width, ry: rect.height};
+    const svg = document.getElementById('svg-preview');
+    const rect = svg.getBoundingClientRect();
+    selStart = {x: e.clientX - rect.left, y: e.clientY - rect.top};
     
     // Clear previous visual shape
     const existing = document.getElementById('sel-preview-shape');
     if (existing) existing.remove();
+    clearSkewHandles();
     
-    const svg = document.getElementById('svg-preview');
     const shapeType = selTool === 'rect' ? 'rect' : selTool === 'circle' ? 'circle' : 'polyline';
     const shape = document.createElementNS("http://www.w3.org/2000/svg", shapeType);
     shape.id = 'sel-preview-shape';
@@ -1300,6 +1302,20 @@ window.addEventListener('mousemove', e => {
   if (isPanning) {
     e.preventDefault();
     // no live view pan — pan tool moves artwork on mouseup so preview == plot
+    return;
+  }
+
+  if (skew.active && skew.corners) {
+    e.preventDefault();
+    const ex = e.clientX - rect.left;
+    const ey = e.clientY - rect.top;
+    const sx = (x) => vb.x + (x / rect.width) * vb.width;
+    const sy = (y) => vb.y + (y / rect.height) * vb.height;
+    const idx = skew.handleIdx;
+    if (idx >= 0 && idx < 4) {
+      skew.corners[idx] = [sx(ex), sy(ey)];
+      updateSkewOverlay();
+    }
     return;
   }
   
@@ -1357,6 +1373,11 @@ window.addEventListener('mouseup', e => {
     viewVbStart = null;
   }
   
+  if (skew.active) {
+    skew.active = false;
+    skew.handleIdx = -1;
+  }
+
   if (isDrawing && selStart) {
     isDrawing = false;
     const svg = document.getElementById('svg-preview');
@@ -1369,15 +1390,16 @@ window.addEventListener('mouseup', e => {
     const sy = (y) => vb.y + (y / rect.height) * vb.height;
     
     if (selTool === 'rect') {
-      selRegion = {
-        type: 'rect', 
-        params: {
-          x: sx(Math.min(selStart.x, ex)), 
-          y: sy(Math.min(selStart.y, ey)),
-          width: Math.abs(sx(ex) - sx(selStart.x)), 
-          height: Math.abs(sy(ey) - sy(selStart.y))
-        }
-      };
+      const x1 = sx(Math.min(selStart.x, ex));
+      const y1 = sy(Math.min(selStart.y, ey));
+      const x2 = sx(Math.max(selStart.x, ex));
+      const y2 = sy(Math.max(selStart.y, ey));
+      const pts = [[x1,y1],[x2,y1],[x2,y2],[x1,y2]];
+      selRegion = {type: 'lasso', params: {points: pts}};
+      // Replace rect overlay with a polygon + corner handles for skewing.
+      const existing = document.getElementById('sel-preview-shape');
+      if (existing) existing.remove();
+      createSkewOverlay(pts);
     } else if (selTool === 'circle') {
       const cx = sx((selStart.x + ex) / 2);
       const cy = sy((selStart.y + ey) / 2);
@@ -1390,6 +1412,66 @@ window.addEventListener('mouseup', e => {
     selStart = null;
   }
 });
+
+function createSkewOverlay(corners) {
+  const svg = document.getElementById('svg-preview');
+  if (!svg) return;
+  skew.corners = corners.map(p => [p[0], p[1]]);
+
+  const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+  poly.id = "sel-preview-shape";
+  poly.setAttribute('fill', 'rgba(88,166,255,0.18)');
+  poly.setAttribute('stroke', '#58a6ff');
+  poly.setAttribute('stroke-width', '1');
+  poly.setAttribute('stroke-dasharray', '4');
+  svg.appendChild(poly);
+  updateSkewOverlay();
+  createSkewHandles();
+}
+
+function updateSkewOverlay() {
+  const poly = document.getElementById('sel-preview-shape');
+  if (!poly || !skew.corners) return;
+  poly.setAttribute('points', skew.corners.map(p => `${p[0]},${p[1]}`).join(' '));
+  selRegion = {type: 'lasso', params: {points: skew.corners.map(p => [p[0], p[1]])}};
+  // update handles
+  for (let i=0;i<4;i++) {
+    const h = document.getElementById('skew-handle-'+i);
+    if (h) { h.setAttribute('cx', skew.corners[i][0]); h.setAttribute('cy', skew.corners[i][1]); }
+  }
+}
+
+function clearSkewHandles() {
+  for (let i=0;i<4;i++) {
+    const h = document.getElementById('skew-handle-'+i);
+    if (h) h.remove();
+  }
+  skew.corners = null;
+  skew.active = false;
+  skew.handleIdx = -1;
+}
+
+function createSkewHandles() {
+  const svg = document.getElementById('svg-preview');
+  if (!svg || !skew.corners) return;
+  for (let i=0;i<4;i++) {
+    const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    c.id = 'skew-handle-'+i;
+    c.setAttribute('r', '3.5');
+    c.setAttribute('fill', '#58a6ff');
+    c.setAttribute('stroke', '#ffffff');
+    c.setAttribute('stroke-width', '1');
+    c.style.cursor = 'move';
+    c.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      skew.active = true;
+      skew.handleIdx = i;
+    });
+    svg.appendChild(c);
+  }
+  updateSkewOverlay();
+}
 
 svgPreviewContainer.addEventListener('wheel', e => {
   e.preventDefault();
@@ -1510,6 +1592,7 @@ async function removeFromQueue(idx) {
 async function plotLayer(layerName) {
   const d = await api('/api/plot/start', {layer_name: layerName});
   if (d && d.ok) toast(`Started plotting ${layerName}`, 'success');
+  else if (d === null) toast('Could not start plot (see error above)', 'error');
 }
 
 async function startPlot() {
@@ -1634,6 +1717,7 @@ async function alignSvg(mode) {
     previewData = d.preview;
     showSvgPreview(d.preview);
     renderLayersPanel(d.preview.layers);
+    resetSvgView();
     toast('Aligned','success');
   }
 }
@@ -1659,7 +1743,7 @@ function queueWheelScale(f) {
     wheelScaleFactor = 1.0;
     await scaleSvg(factor);
     resetSvgView(); // keep fit-to-window view
-  }, 80);
+  }, 1500);
 }
 
 async function translateSvg(dx, dy) {
@@ -1677,8 +1761,10 @@ function resetSvgView() {
   const paper = getPaperDims();
   const svg = document.getElementById('svg-preview');
   svg.setAttribute('viewBox', `0 0 ${paper.w} ${paper.h}`);
+  applyCanvasAspect(paper.w, paper.h);
   const existing = document.getElementById('sel-preview-shape');
   if (existing) existing.remove();
+  clearSkewHandles();
 }
 
 let paperDimsDebounce = null;
@@ -1688,16 +1774,24 @@ async function onPaperDimsChange() {
   paperDimsDebounce = setTimeout(async () => {
     const paper = getPaperDims();
     const svg = document.getElementById('svg-preview');
-    if (svg) svg.setAttribute('viewBox', `0 0 ${paper.w} ${paper.h}`);
+    if (svg) {
+      svg.setAttribute('viewBox', `0 0 ${paper.w} ${paper.h}`);
+      applyCanvasAspect(paper.w, paper.h);
+    }
 
     // Update backend bed dims so motion soft-limits match the UI dimensions.
     await api('/api/config', {bed_width_mm: paper.w, bed_height_mm: paper.h});
+    // Avoid heavy preview rebuild on every keystroke; viewBox/aspect is enough.
+    if (previewData) resetSvgView();
+  }, 600);
+}
 
-    if (previewData) {
-      showSvgPreview(previewData);
-      renderLayersPanel(previewData.layers);
-    }
-  }, 250);
+function applyCanvasAspect(wMm, hMm) {
+  const svg = document.getElementById('svg-preview');
+  if (!svg) return;
+  // Help the white "paper" change shape immediately as dimensions change.
+  // CSS aspect-ratio is supported in modern browsers; safe no-op if not.
+  svg.style.aspectRatio = `${wMm} / ${hMm}`;
 }
 
 function onUnitsToggle() {
