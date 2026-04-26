@@ -564,7 +564,7 @@ label { font-size:0.8rem; color:var(--text-muted); }
           <option value="7">AxiDraw MiniKit</option>
         </select></div>
       <div class="dim-display">Bed: <strong id="s-bed-display">300 × 218 mm</strong></div>
-      <div class="form-row" style="margin-top:4px"><label><input type="checkbox" id="s-const-speed" onchange="scheduleProfileAutosave()"> Constant Velocity</label></div>
+      <div class="form-row" style="margin-top:4px"><label><input type="checkbox" id="s-const-speed" onchange="onConstSpeedChange()"> Constant Velocity</label></div>
     </div>
 
       <div id="home-vpype-wrap" style="display:flex; gap:10px;">
@@ -1018,6 +1018,11 @@ function liveOverrideCommit(key, val) {
   const vid = SLIDER_LABEL_IDS[key];
   if (vid) document.getElementById(vid).textContent = sliderLabelText(key, val);
   api('/api/override', {[key]: val});
+  scheduleProfileAutosave();
+}
+function onConstSpeedChange() {
+  const enabled = document.getElementById('s-const-speed').checked;
+  api('/api/override', {const_speed: enabled});
   scheduleProfileAutosave();
 }
 let profileAutosaveTimer = null;
