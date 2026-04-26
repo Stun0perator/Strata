@@ -1014,6 +1014,7 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
         offset_y = float(req_args.get("offset_y", 0.0))
     except (TypeError, ValueError):
         scale, offset_x, offset_y = 1.0, 0.0, 0.0
+    distance_scale = abs(scale) if scale else 1.0
 
     instructions = svg_proc.get_plot_paths(
         dip_threshold_mm=dip_threshold,
@@ -1029,11 +1030,11 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
     # telemetry counts reflect enabled layers; if plotting a single layer, scope it
     if layer_name:
         layer_obj = next((l for l in svg_proc.current.enabled_layers() if l.name == layer_name), None) if svg_proc.current else None
-        total_dist = layer_obj.total_distance() if layer_obj else 0.0
+        total_dist = (layer_obj.total_distance() * distance_scale) if layer_obj else 0.0
         total_paths = layer_obj.path_count() if layer_obj else 0
         total_layers = 1 if layer_obj else 0
     else:
-        total_dist = svg_proc.current.total_distance()
+        total_dist = svg_proc.current.total_distance() * distance_scale
         total_paths = svg_proc.current.total_paths()
         total_layers = len(svg_proc.current.enabled_layers())
 
@@ -1050,6 +1051,11 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
     path_idx = 0
     pending_swap = False
     swap_event = asyncio.Event()
+    motion_failed = False
+
+    async def run_motion(fn, x: float, y: float) -> bool:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, fn, x, y)
 
     for instr in instructions:
         if state.plot_state == PlotState.IDLE:
@@ -1101,10 +1107,10 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
 
         elif itype == "travel":
             if dry:
-                serial_mgr.rapid_move(instr["x"], instr["y"])
+                motion_failed = not await run_motion(serial_mgr.rapid_move_sync, instr["x"], instr["y"])
             else:
                 serial_mgr.pen_up()
-                serial_mgr.rapid_move(instr["x"], instr["y"])
+                motion_failed = not await run_motion(serial_mgr.rapid_move_sync, instr["x"], instr["y"])
 
         elif itype == "pen_down":
             if not dry:
@@ -1122,9 +1128,9 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
 
         elif itype == "draw":
             if dry:
-                serial_mgr.rapid_move(instr["x"], instr["y"])
+                motion_failed = not await run_motion(serial_mgr.rapid_move_sync, instr["x"], instr["y"])
             else:
-                serial_mgr.move_to_and_draw(instr["x"], instr["y"])
+                motion_failed = not await run_motion(serial_mgr.move_to_and_draw_sync, instr["x"], instr["y"])
 
         elif itype == "dip":
             if not dry:
@@ -1132,15 +1138,20 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
                 if taper_enabled:
                     serial_mgr.set_live_override("pen_pos_down", profile.get("pen_pos_down", 40))
 
+        if motion_failed:
+            state.errors.append("Motion command failed or timed out")
+            logger.error("Plot stopped: motion command failed")
+            break
+
         await asyncio.sleep(0)  # yield to event loop
 
-    # plot complete
+    # plot complete / stopped
     duration = time.time() - plot_start
     state.update(plot_state=PlotState.IDLE)
     serial_mgr.pen_up()
     serial_mgr.walk_home()
 
-    if not dry:
+    if not dry and not motion_failed:
         history.log_plot(
             filename=svg_proc.current.filename if svg_proc.current else "unknown",
             profile_name=profile_name,
@@ -1164,6 +1175,7 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
         "distance_mm": round(state.distance_plotted, 1),
         "dip_count": state.dip_count,
         "dry_run": dry,
+        "error": "Motion command failed or timed out" if motion_failed else "",
     })
     await broadcast_state()
 

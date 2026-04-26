@@ -419,11 +419,11 @@ class SerialManager:
         logger.warning("LM unclear response %r — XM fallback", resp)
         return False
 
-    def _xm_move(self, dx_mm: float, dy_mm: float, speed_mm_s: float) -> None:
+    def _xm_move(self, dx_mm: float, dy_mm: float, speed_mm_s: float) -> bool:
         sx, sy = self._microsteps_xy(dx_mm, dy_mm)
         distance_mm = math.hypot(dx_mm, dy_mm)
         if distance_mm < 1e-9 and sx == 0 and sy == 0:
-            return
+            return True
         duration_ms = max(1, int(distance_mm / max(0.01, speed_mm_s) * 1000))
         if sx == 0 and sy == 0 and distance_mm >= 1e-6:
             if abs(dx_mm) >= abs(dy_mm):
@@ -434,9 +434,14 @@ class SerialManager:
         axis1_steps, axis2_steps = self._corexy_axes(sx, sy)
         xm = f"XM,{duration_ms},{axis1_steps},{axis2_steps}"
         with self._serial_lock:
-            self._exchange(xm, read_timeout=2.0)
+            resp = self._exchange(xm, read_timeout=2.0)
+        rlow = resp.lower()
+        if "!" in resp or "err" in rlow:
+            logger.warning("XM rejected: %r", resp)
+            return False
+        return True
 
-    def _wait_motion_complete(self) -> None:
+    def _wait_motion_complete(self) -> bool:
         deadline = time.time() + QM_MAX_WAIT_S
         while time.time() < deadline:
             with self._serial_lock:
@@ -445,26 +450,31 @@ class SerialManager:
             if len(parts) >= 5 and parts[0].upper() == "QM":
                 try:
                     if parts[1] == "0" and parts[4] == "0":
-                        return
+                        return True
                 except IndexError:
                     pass
             time.sleep(QM_POLL_INTERVAL_S)
         logger.warning("QM wait timed out after %.0fs", QM_MAX_WAIT_S)
+        return False
 
-    def _move_with_planner(self, dx_mm: float, dy_mm: float, speed_mm_s: float) -> None:
+    def _move_with_planner(self, dx_mm: float, dy_mm: float, speed_mm_s: float) -> bool:
         if abs(dx_mm) < 1e-9 and abs(dy_mm) < 1e-9:
-            return
+            return True
         used_lm = self._try_lm_move(dx_mm, dy_mm, speed_mm_s)
         if not used_lm:
-            self._xm_move(dx_mm, dy_mm, speed_mm_s)
-        self._wait_motion_complete()
+            if not self._xm_move(dx_mm, dy_mm, speed_mm_s):
+                return False
+        return self._wait_motion_complete()
 
     # ---- queue execution ----
 
     def _execute_py_command(self, sc: SerialCommand):
         if self._ser is None or not self._ser.is_open:
+            if sc.callback:
+                sc.callback("error")
             return
         body = sc.command[4:]
+        result = "ok"
         try:
             if body == "penup":
                 profile = self._active_profile()
@@ -499,16 +509,19 @@ class SerialManager:
                 parts = body.split(",")
                 rdx, rdy = float(parts[1]), float(parts[2])
                 spd = self._speed_mm_s_for_tag(sc.tag)
-                self._move_with_planner(rdx, rdy, spd)
+                if not self._move_with_planner(rdx, rdy, spd):
+                    result = "error"
             elif body.startswith("mov,"):
                 parts = body.split(",")
                 if len(parts) != 3:
                     logger.warning("Bad mov: %s", sc.command)
+                    result = "error"
                     return
                 x, y = float(parts[1]), float(parts[2])
                 cx = float(self.state.current_x)
                 cy = float(self.state.current_y)
-                self._move_with_planner(x - cx, y - cy, self._speed_mm_s_for_tag("travel"))
+                if not self._move_with_planner(x - cx, y - cy, self._speed_mm_s_for_tag("travel")):
+                    result = "error"
             elif body.startswith("lin,"):
                 parts = body.split(",")
                 if len(parts) == 4:
@@ -520,19 +533,23 @@ class SerialManager:
                     spd = self._speed_mm_s_for_tag(sc.tag)
                 else:
                     logger.warning("Bad lin: %s", sc.command)
+                    result = "error"
                     return
                 cx = float(self.state.current_x)
                 cy = float(self.state.current_y)
-                self._move_with_planner(x - cx, y - cy, spd)
+                if not self._move_with_planner(x - cx, y - cy, spd):
+                    result = "error"
             else:
                 logger.warning("Unknown command: %s", sc.command)
+                result = "error"
         except Exception as e:
+            result = "error"
             logger.error("Command error (%s): %s", sc.command, e, exc_info=True)
             if self.on_error:
                 self.on_error(str(e))
         finally:
             if sc.callback:
-                sc.callback("")
+                sc.callback(result)
 
     def _execute_raw_ebb(self, cmd: str):
         payload = cmd[5:].strip().upper()
@@ -557,6 +574,21 @@ class SerialManager:
             tag=tag,
         )
         self._cmd_queue.put(sc)
+
+    def enqueue_wait(self, cmd: str, priority: Priority = Priority.STREAM,
+                     tag: str = "", timeout_s: float = 120.0) -> bool:
+        done = threading.Event()
+        result = {"ok": False}
+
+        def _cb(resp: str):
+            result["ok"] = resp == "ok"
+            done.set()
+
+        self.enqueue(cmd, priority, callback=_cb, tag=tag)
+        if not done.wait(timeout_s):
+            logger.warning("Timed out waiting for command: %s", cmd)
+            return False
+        return result["ok"]
 
     def _flush_queue(self):
         while not self._cmd_queue.empty():
@@ -726,8 +758,9 @@ class SerialManager:
         self._commanded_x = target_x
         self._commanded_y = target_y
 
-        def _cb(_r, nx=target_x, ny=target_y):
-            self.state.update(current_x=nx, current_y=ny)
+        def _cb(resp, nx=target_x, ny=target_y):
+            if resp == "ok":
+                self.state.update(current_x=nx, current_y=ny)
 
         self.enqueue(
             f"_py:go,{rdx:.6f},{rdy:.6f}",
@@ -738,38 +771,48 @@ class SerialManager:
         return None
 
     def _move_to(self, x_mm: float, y_mm: float, travel: bool = True,
-                 priority: Priority = Priority.STREAM, pen_down_after: bool = False):
+                 priority: Priority = Priority.STREAM, pen_down_after: bool = False,
+                 wait: bool = False) -> bool:
         err = self._check_soft_limits(x_mm, y_mm)
         if err:
             logger.warning("Soft limit: %s", err)
             if self.on_error:
                 self.on_error(err)
-            return
+            return False
         dx = x_mm - self.state.current_x
         dy = y_mm - self.state.current_y
         dist_mm = math.hypot(dx, dy)
         if dist_mm < 0.001:
-            return
+            return True
         tag = "travel" if travel else "draw"
         kind = "mov" if travel else "lin"
 
-        def _upd(_r, nx=x_mm, ny=y_mm, d=dist_mm, t=travel):
-            self.state.update(current_x=nx, current_y=ny)
-            if not t:
-                self.state.add_distance(d)
+        def _upd(resp, nx=x_mm, ny=y_mm, d=dist_mm, t=travel):
+            if resp == "ok":
+                self.state.update(current_x=nx, current_y=ny)
+                if not t:
+                    self.state.add_distance(d)
 
-        self.enqueue(
-            f"_py:{kind},{x_mm:.6f},{y_mm:.6f}",
-            priority,
-            callback=_upd,
-            tag=tag,
-        )
+        cmd = f"_py:{kind},{x_mm:.6f},{y_mm:.6f}"
+        if wait:
+            ok = self.enqueue_wait(cmd, priority, tag=tag)
+            if ok:
+                _upd("ok")
+            return ok
+        self.enqueue(cmd, priority, callback=_upd, tag=tag)
+        return True
 
     def move_to_and_draw(self, x_mm: float, y_mm: float, priority: Priority = Priority.STREAM):
         self._move_to(x_mm, y_mm, travel=False, priority=priority)
 
     def rapid_move(self, x_mm: float, y_mm: float, priority: Priority = Priority.STREAM):
         self._move_to(x_mm, y_mm, travel=True, priority=priority)
+
+    def move_to_and_draw_sync(self, x_mm: float, y_mm: float, priority: Priority = Priority.STREAM) -> bool:
+        return self._move_to(x_mm, y_mm, travel=False, priority=priority, wait=True)
+
+    def rapid_move_sync(self, x_mm: float, y_mm: float, priority: Priority = Priority.STREAM) -> bool:
+        return self._move_to(x_mm, y_mm, travel=True, priority=priority, wait=True)
 
     def _check_soft_limits(self, x: float, y: float) -> Optional[str]:
         try:

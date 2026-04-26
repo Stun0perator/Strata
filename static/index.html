@@ -1737,6 +1737,7 @@ function emergencyStop() { api('/api/plot/stop'); toast('EMERGENCY STOP','error'
 
 function onPlotComplete(data) {
   stopTimer();
+  if (data.error) { toast(data.error, 'error'); return; }
   if (data.dry_run) { toast('Dry run complete','info'); }
   else { toast(`Plot complete! ${data.distance_mm}mm in ${Math.round(data.duration_s/60)} min, ${data.dip_count} dips`,'success'); }
 }
