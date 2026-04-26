@@ -430,7 +430,9 @@ class SerialManager:
                 sx = 1 if dx_mm >= 0 else -1
             else:
                 sy = 1 if dy_mm >= 0 else -1
-        xm = f"XM,{duration_ms},{sx},{sy}"
+        # XM/SM-class moves are addressed in motor-axis microsteps, not XY coordinates.
+        axis1_steps, axis2_steps = self._corexy_axes(sx, sy)
+        xm = f"XM,{duration_ms},{axis1_steps},{axis2_steps}"
         with self._serial_lock:
             self._exchange(xm, read_timeout=2.0)
 

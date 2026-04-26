@@ -995,6 +995,10 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
         offset_y=offset_y,
         layer_name=layer_name,
     )
+    plotted_layers = [
+        l for l in sorted(svg_proc.current.enabled_layers(), key=lambda l: l.order)
+        if not layer_name or l.name == layer_name
+    ]
     # telemetry counts reflect enabled layers; if plotting a single layer, scope it
     if layer_name:
         layer_obj = next((l for l in svg_proc.current.enabled_layers() if l.name == layer_name), None) if svg_proc.current else None
@@ -1049,8 +1053,7 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
             await broadcast_state()
 
         elif itype == "layer_end":
-            remaining = [l for l in svg_proc.current.enabled_layers()
-                         if l.order > layer_idx - 1]
+            remaining = plotted_layers[layer_idx:]
             if remaining and not dry:
                 serial_mgr.pen_up()
                 serial_mgr.walk_home()

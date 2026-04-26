@@ -146,8 +146,7 @@ class SVGProcessor:
             raise ValueError(f"Failed to parse SVG: {e}")
 
         vb = self._parse_viewbox(svg_attributes)
-        width_mm = vb[2] if vb else 300
-        height_mm = vb[3] if vb else 218
+        width_mm, height_mm = self._document_size_mm(svg_attributes, vb)
 
         layer_map: dict[str, SVGLayer] = {}
         all_min_x, all_min_y = float("inf"), float("inf")
@@ -193,11 +192,9 @@ class SVGProcessor:
             all_max_y = height_mm
 
         layers = list(layer_map.values())
-        doc_w, doc_h = width_mm, height_mm
-        vx0, vy0, vw, vh = self._mapping_viewport(vb, doc_w, doc_h)
-        bed_w, bed_h = self._bed_dims_from_config()
-        if bed_w is not None and bed_h is not None and vw > 0 and vh > 0:
-            layers = self._map_layers_to_bed(layers, vx0, vy0, vw, vh, bed_w, bed_h)
+        vx0, vy0, vw, vh = self._mapping_viewport(vb, width_mm, height_mm)
+        if vw > 0 and vh > 0:
+            layers = self._map_layers_to_document(layers, vx0, vy0, vw, vh, width_mm, height_mm)
             all_min_x = all_min_y = float("inf")
             all_max_x = all_max_y = float("-inf")
             for layer in layers:
@@ -209,8 +206,7 @@ class SVGProcessor:
                         all_max_y = max(all_max_y, py)
             if all_min_x == float("inf"):
                 all_min_x = all_min_y = 0.0
-                all_max_x, all_max_y = bed_w, bed_h
-            width_mm, height_mm = bed_w, bed_h
+                all_max_x, all_max_y = width_mm, height_mm
 
         # Normalize layer naming to numeric "1", "2", ... (stable order)
         layers = self._renumber_layers_numeric(layers)
@@ -289,28 +285,28 @@ class SVGProcessor:
         doc_w: float,
         doc_h: float,
     ) -> tuple[float, float, float, float]:
-        """Return (min_x, min_y, width, height) of SVG document space to map onto the bed."""
+        """Return (min_x, min_y, width, height) of SVG user space to map to document mm."""
         if vb:
             return vb[0], vb[1], max(vb[2], 1e-9), max(vb[3], 1e-9)
         return 0.0, 0.0, max(doc_w, 1e-9), max(doc_h, 1e-9)
 
     @staticmethod
-    def _map_layers_to_bed(
+    def _map_layers_to_document(
         layers: list[SVGLayer],
         vx0: float,
         vy0: float,
         vw: float,
         vh: float,
-        bed_w: float,
-        bed_h: float,
+        doc_w: float,
+        doc_h: float,
     ) -> list[SVGLayer]:
-        """Map path coordinates from SVG document space linearly onto [0, bed_w] x [0, bed_h]."""
+        """Map SVG user coordinates into physical document millimeters."""
         out: list[SVGLayer] = []
         for layer in layers:
             new_paths = []
             for seg in layer.paths:
                 new_pts = [
-                    ((px - vx0) / vw * bed_w, (py - vy0) / vh * bed_h)
+                    ((px - vx0) / vw * doc_w, (py - vy0) / vh * doc_h)
                     for px, py in seg.points
                 ]
                 new_paths.append(PathSegment(
@@ -341,10 +337,6 @@ class SVGProcessor:
                 except ValueError:
                     pass
 
-        w = self._parse_dimension(attrs.get("width", ""))
-        h = self._parse_dimension(attrs.get("height", ""))
-        if w and h:
-            return (0, 0, w, h)
         return None
 
     @staticmethod
@@ -363,13 +355,28 @@ class SVGProcessor:
                         return v * 10.0
                     if suffix == "pt":
                         return v * 0.3528
-                    return v  # mm or px (treat px as mm for plotters)
+                    if suffix == "px":
+                        return v * 25.4 / 96.0
+                    return v
                 except ValueError:
                     return None
         try:
             return float(val)
         except ValueError:
             return None
+
+    def _document_size_mm(self, attrs: dict, vb: Optional[tuple]) -> tuple[float, float]:
+        """Return physical SVG document size in millimeters."""
+        w = self._parse_dimension(attrs.get("width", ""))
+        h = self._parse_dimension(attrs.get("height", ""))
+        if w and h:
+            return w, h
+        if vb:
+            # Many plotter SVGs are authored with unitless viewBox dimensions.
+            # Treat those user units as millimeters when no physical size exists.
+            return max(vb[2], 1e-9), max(vb[3], 1e-9)
+        bed_w, bed_h = self._bed_dims_from_config()
+        return bed_w or 300.0, bed_h or 218.0
 
     def _extract_layer_names(self, root, ns) -> dict:
         """Map group IDs to Inkscape layer labels."""
@@ -496,9 +503,13 @@ class SVGProcessor:
         except FileNotFoundError:
             raise RuntimeError("vpype not installed or not in PATH")
 
+        original_path = self._original_svg_path
+        original_filename = self._current.filename if self._current else "optimized.svg"
+
         self._optimized_svg_path = tmp.name
-        optimized = self.load_svg(tmp.name)
-        optimized.filename = self._current.filename if self._current else "optimized.svg"
+        optimized = self.load(tmp.name)
+        optimized.filename = original_filename
+        self._original_svg_path = original_path
 
         after_stats = {
             "paths": optimized.total_paths(),
@@ -511,9 +522,14 @@ class SVGProcessor:
     def use_optimized(self, use: bool):
         self._use_optimized = use
         if use and self._optimized_svg_path:
-            self.load_svg(self._optimized_svg_path)
+            original_path = self._original_svg_path
+            original_filename = self._current.filename if self._current else "optimized.svg"
+            self.load(self._optimized_svg_path)
+            if self._current:
+                self._current.filename = original_filename
+            self._original_svg_path = original_path
         elif not use and self._original_svg_path:
-            self.load_svg(self._original_svg_path)
+            self.load(self._original_svg_path)
 
     # ---- undo stack ----
 

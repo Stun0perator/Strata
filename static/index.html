@@ -823,7 +823,15 @@ const MODEL_DIMS = {
 
 function updateBedDisplay(modelId) {
   const m = MODEL_DIMS[+modelId];
-  if (m) document.getElementById('s-bed-display').textContent = `${m.w} × ${m.h} mm`;
+  if (!m) return;
+  document.getElementById('s-bed-display').textContent = `${m.w} x ${m.h} mm`;
+  setPaperInputsFromMm(m.w, m.h);
+  const svg = document.getElementById('svg-preview');
+  if (svg) {
+    svg.setAttribute('viewBox', `0 0 ${m.w} ${m.h}`);
+    applyCanvasAspect(m.w, m.h);
+  }
+  if (previewData) resetSvgView();
 }
 
 async function onModelChange(modelId) {
@@ -1162,6 +1170,20 @@ function getPaperDims() {
   const hRaw = Number.isFinite(hIn) ? hIn : (units === 'in' ? 8.583 : 218);
   const mmPer = units === 'in' ? 25.4 : 1.0;
   return {w: Math.max(1, wRaw * mmPer), h: Math.max(1, hRaw * mmPer)};
+}
+
+function setPaperInputsFromMm(wMm, hMm) {
+  const units = document.getElementById('paper-units')?.value || 'in';
+  const wEl = document.getElementById('paper-w');
+  const hEl = document.getElementById('paper-h');
+  if (!wEl || !hEl) return;
+  if (units === 'in') {
+    wEl.value = (wMm / 25.4).toFixed(3);
+    hEl.value = (hMm / 25.4).toFixed(3);
+  } else {
+    wEl.value = Number(wMm).toFixed(2);
+    hEl.value = Number(hMm).toFixed(2);
+  }
 }
 
 function renderLayersPanel(layers) {
