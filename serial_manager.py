@@ -94,6 +94,7 @@ class SerialManager:
         self._last_pen_servo_pos: int = PEN_SERVO_MAX
         self._commanded_x: float = 0.0
         self._commanded_y: float = 0.0
+        self._stream_motion_error = False
 
     # ---- ports ----
 
@@ -457,13 +458,15 @@ class SerialManager:
         logger.warning("QM wait timed out after %.0fs", QM_MAX_WAIT_S)
         return False
 
-    def _move_with_planner(self, dx_mm: float, dy_mm: float, speed_mm_s: float) -> bool:
+    def _move_with_planner(self, dx_mm: float, dy_mm: float, speed_mm_s: float, wait: bool = True) -> bool:
         if abs(dx_mm) < 1e-9 and abs(dy_mm) < 1e-9:
             return True
-        used_lm = self._try_lm_move(dx_mm, dy_mm, speed_mm_s)
+        used_lm = self._try_lm_move(dx_mm, dy_mm, speed_mm_s) if wait else False
         if not used_lm:
             if not self._xm_move(dx_mm, dy_mm, speed_mm_s):
                 return False
+        if not wait:
+            return True
         return self._wait_motion_complete()
 
     # ---- queue execution ----
@@ -522,6 +525,18 @@ class SerialManager:
                 cy = float(self.state.current_y)
                 if not self._move_with_planner(x - cx, y - cy, self._speed_mm_s_for_tag("travel")):
                     result = "error"
+            elif body.startswith("lin_stream,"):
+                parts = body.split(",")
+                if len(parts) != 3:
+                    logger.warning("Bad lin_stream: %s", sc.command)
+                    result = "error"
+                    return
+                x, y = float(parts[1]), float(parts[2])
+                cx = float(self.state.current_x)
+                cy = float(self.state.current_y)
+                if not self._move_with_planner(x - cx, y - cy, self._speed_mm_s_for_tag("draw"), wait=False):
+                    self._stream_motion_error = True
+                    result = "error"
             elif body.startswith("lin,"):
                 parts = body.split(",")
                 if len(parts) == 4:
@@ -538,6 +553,11 @@ class SerialManager:
                 cx = float(self.state.current_x)
                 cy = float(self.state.current_y)
                 if not self._move_with_planner(x - cx, y - cy, spd):
+                    result = "error"
+            elif body == "wait_motion":
+                had_stream_error = self._stream_motion_error
+                self._stream_motion_error = False
+                if had_stream_error or not self._wait_motion_complete():
                     result = "error"
             else:
                 logger.warning("Unknown command: %s", sc.command)
@@ -813,6 +833,36 @@ class SerialManager:
 
     def rapid_move_sync(self, x_mm: float, y_mm: float, priority: Priority = Priority.STREAM) -> bool:
         return self._move_to(x_mm, y_mm, travel=True, priority=priority, wait=True)
+
+    def move_to_and_draw_stream(self, x_mm: float, y_mm: float, priority: Priority = Priority.STREAM) -> bool:
+        err = self._check_soft_limits(x_mm, y_mm)
+        if err:
+            logger.warning("Soft limit: %s", err)
+            if self.on_error:
+                self.on_error(err)
+            return False
+
+        cx = float(self.state.current_x)
+        cy = float(self.state.current_y)
+        dist_mm = math.hypot(x_mm - cx, y_mm - cy)
+        if dist_mm < 0.001:
+            return True
+
+        def _upd(resp, nx=x_mm, ny=y_mm, d=dist_mm):
+            if resp == "ok":
+                self.state.update(current_x=nx, current_y=ny)
+                self.state.add_distance(d)
+
+        self.enqueue(
+            f"_py:lin_stream,{x_mm:.6f},{y_mm:.6f}",
+            priority,
+            callback=_upd,
+            tag="draw",
+        )
+        return True
+
+    def wait_motion_sync(self, priority: Priority = Priority.STREAM) -> bool:
+        return self.enqueue_wait("_py:wait_motion", priority, tag="wait_motion")
 
     def _check_soft_limits(self, x: float, y: float) -> Optional[str]:
         try:

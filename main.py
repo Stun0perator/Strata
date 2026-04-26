@@ -1068,6 +1068,13 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, fn, x, y)
 
+    async def wait_for_streamed_motion() -> bool:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, serial_mgr.wait_motion_sync)
+
+    streamed_draw_count = 0
+    stream_flush_every = 32
+
     for instr in instructions:
         if state.plot_state == PlotState.IDLE:
             break
@@ -1076,6 +1083,14 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
             await asyncio.sleep(0.1)
 
         itype = instr["type"]
+
+        if itype != "draw" and streamed_draw_count:
+            motion_failed = not await wait_for_streamed_motion()
+            streamed_draw_count = 0
+            if motion_failed:
+                state.errors.append("Motion command failed or timed out")
+                logger.error("Plot stopped: streamed motion failed")
+                break
 
         if itype == "layer_start":
             current_layer_name = instr["layer"]
@@ -1141,7 +1156,12 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
             if dry:
                 motion_failed = not await run_motion(serial_mgr.rapid_move_sync, instr["x"], instr["y"])
             else:
-                motion_failed = not await run_motion(serial_mgr.move_to_and_draw_sync, instr["x"], instr["y"])
+                motion_failed = not serial_mgr.move_to_and_draw_stream(instr["x"], instr["y"])
+                if not motion_failed:
+                    streamed_draw_count += 1
+                    if streamed_draw_count >= stream_flush_every:
+                        motion_failed = not await wait_for_streamed_motion()
+                        streamed_draw_count = 0
 
         elif itype == "dip":
             if not dry:
@@ -1155,6 +1175,9 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
             break
 
         await asyncio.sleep(0)  # yield to event loop
+
+    if not motion_failed and streamed_draw_count:
+        motion_failed = not await wait_for_streamed_motion()
 
     # plot complete / stopped
     duration = time.time() - plot_start
