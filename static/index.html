@@ -1382,11 +1382,14 @@ document.addEventListener('DOMContentLoaded', () => {
   setSelTool('pan');
 });
 
-function setSelTool(tool) {
+async function setSelTool(tool) {
   selTool = tool;
   document.querySelectorAll('#preview-toolbar button').forEach(b => b.classList.remove('active'));
   const btn = document.getElementById('sel-'+tool);
   if (btn) btn.classList.add('active');
+  if (tool === 'rect' || tool === 'circle' || tool === 'lasso') {
+    await commitPendingPreviewTransform();
+  }
 }
 
 const svgPreviewContainer = document.getElementById('svg-preview-container');
@@ -1636,6 +1639,7 @@ svgPreviewContainer.addEventListener('wheel', e => {
 async function extractSelectionToNewLayer() {
   if (!selRegion) { toast('Draw a selection first','error'); return; }
   if (!activeLayerName) { toast('Select a layer first','error'); return; }
+  if (!(await commitPendingPreviewTransform())) return;
   const d = await api('/api/layers/extract', {
     source_layer: activeLayerName,
     region_type: selRegion.type,
@@ -1656,15 +1660,33 @@ async function extractSelectionToNewLayer() {
   if (existing) existing.remove();
 }
 
-function setLayerMaskFromUI(layerName) {
+async function setLayerMaskFromUI(layerName) {
   const tool = document.getElementById('mask-tool-' + layerName).value;
-  setSelTool(tool);
+  await setSelTool(tool);
   document.getElementById('target-layer-select').value = layerName;
   if (!selRegion) {
     toast(`Please draw a ${tool} on the preview first`, 'error');
     return;
   }
   setAsMask();
+}
+
+async function setAsMask() {
+  if (!selRegion) { toast('Draw a selection first','error'); return; }
+  const layerName = document.getElementById('target-layer-select')?.value || activeLayerName;
+  if (!layerName) { toast('Select a layer first','error'); return; }
+  if (!(await commitPendingPreviewTransform())) return;
+  const d = await api('/api/layers/mask', {
+    layer: layerName,
+    region_type: selRegion.type,
+    region_params: selRegion.params,
+  });
+  if (d && d.preview) {
+    previewData = d.preview;
+    showSvgPreview(d.preview);
+    renderLayersPanel(d.preview.layers);
+    toast('Mask applied','success');
+  }
 }
 
 async function svgUndo() {
@@ -1974,6 +1996,18 @@ function getPendingPlotArgs() {
   const offsetY = pendingTransform.dy + c.y * (1 - scale);
   wheelScaleFactor = 1.0;
   return {scale, offset_x: offsetX, offset_y: offsetY};
+}
+
+async function commitPendingPreviewTransform() {
+  if (!previewData || !hasPendingPreviewTransform()) return true;
+  const args = getPendingPlotArgs();
+  const d = await api('/api/svg/apply_transform', args);
+  if (!d || !d.preview) return false;
+  previewData = d.preview;
+  clearLivePreviewTransform();
+  showSvgPreview(d.preview);
+  renderLayersPanel(d.preview.layers);
+  return true;
 }
 
 async function scaleSvg(factor) {

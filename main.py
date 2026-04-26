@@ -799,6 +799,31 @@ async def svg_scale(request: Request):
         return JSONResponse({"error": str(e)}, 500)
 
 
+@app.post("/api/svg/apply_transform")
+async def svg_apply_transform(request: Request):
+    """Bake the current browser preview scale/offset into SVG geometry."""
+    if not svg_proc.has_svg:
+        return JSONResponse({"error": "No SVG loaded"}, 400)
+    body = await request.json()
+    try:
+        scale = float(body.get("scale", 1.0))
+        offset_x = float(body.get("offset_x", 0.0))
+        offset_y = float(body.get("offset_y", 0.0))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "Invalid transform"}, 400)
+    if scale <= 0 or scale > 100:
+        return JSONResponse({"error": "Scale out of range"}, 400)
+    try:
+        svg_proc.apply_transform(scale=scale, offset_x=offset_x, offset_y=offset_y)
+        preview = svg_proc.current.to_preview_json() if svg_proc.current else None
+        if preview:
+            await broadcast_message("svg_loaded", {"preview": preview, "filename": preview.get("filename", "")})
+        return {"ok": True, "preview": preview}
+    except Exception as e:
+        logger.exception("Apply transform error")
+        return JSONResponse({"error": str(e)}, 500)
+
+
 @app.post("/api/svg/translate")
 async def svg_translate(request: Request):
     """Translate all geometry by dx/dy (mm)."""

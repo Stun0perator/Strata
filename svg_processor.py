@@ -886,6 +886,18 @@ class SVGProcessor:
                 seg.points = [((px - cx) * factor + cx, (py - cy) * factor + cy) for px, py in seg.points]
         self._recompute_bounds()
 
+    def apply_transform(self, scale: float = 1.0, offset_x: float = 0.0, offset_y: float = 0.0) -> None:
+        """Bake the browser preview transform into the SVG geometry."""
+        if not self._current:
+            return
+        if abs(scale - 1.0) < 1e-12 and abs(offset_x) < 1e-12 and abs(offset_y) < 1e-12:
+            return
+        self._push_undo()
+        for layer in self._current.layers:
+            for seg in layer.paths:
+                seg.points = [((px * scale) + offset_x, (py * scale) + offset_y) for px, py in seg.points]
+        self._recompute_bounds()
+
     def translate(self, dx: float, dy: float) -> None:
         """Translate all geometry by (dx, dy) in current coordinate units (mm)."""
         if not self._current:
