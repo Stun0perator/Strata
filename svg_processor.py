@@ -870,6 +870,18 @@ class SVGProcessor:
                 seg.points = [((px - cx) * factor + cx, (py - cy) * factor + cy) for px, py in seg.points]
         self._recompute_bounds()
 
+    def translate(self, dx: float, dy: float) -> None:
+        """Translate all geometry by (dx, dy) in current coordinate units (mm)."""
+        if not self._current:
+            return
+        if abs(dx) < 1e-12 and abs(dy) < 1e-12:
+            return
+        self._push_undo()
+        for layer in self._current.layers:
+            for seg in layer.paths:
+                seg.points = [(px + dx, py + dy) for px, py in seg.points]
+        self._recompute_bounds()
+
     def get_plot_paths(self, dip_threshold_mm: float = 0, scale: float = 1.0, offset_x: float = 0.0, offset_y: float = 0.0, layer_name: str = None) -> list[dict]:
         """
         Return ordered list of move instructions for the plotter.

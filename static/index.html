@@ -35,6 +35,9 @@ button.danger { background:var(--red); color:#fff; border-color:var(--red); }
 button.danger:hover { opacity:0.85; }
 button.success { background:var(--green); color:#fff; border-color:var(--green); }
 button:disabled { opacity:0.4; cursor:not-allowed; }
+button.icon-btn { padding:6px 10px; display:inline-flex; align-items:center; justify-content:center; gap:6px; }
+.icon { width:16px; height:16px; display:inline-block; }
+.icon svg { width:16px; height:16px; display:block; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
 input, select { font-family:inherit; font-size:0.85rem; background:var(--surface2); color:var(--text);
   border:1px solid var(--border); padding:6px 10px; border-radius:6px; outline:none; }
 input:focus, select:focus { border-color:var(--accent); }
@@ -546,34 +549,57 @@ label { font-size:0.8rem; color:var(--text-muted); }
   <!-- RIGHT PANEL (58%) -->
   <div id="right-panel" style="width:58%; background:var(--surface2); display:flex; flex-direction:column; overflow:hidden;">
     <div id="paper-settings" style="padding:8px 12px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:center; font-size:0.75rem; flex-wrap:wrap;">
-      <label>Canvas (mm):</label>
-      <input type="number" id="paper-w" min="1" step="1" value="300" style="width:74px" oninput="onPaperDimsChange()">
+      <label>Canvas:</label>
+      <input type="number" id="paper-w" min="0.1" step="0.1" value="11.811" style="width:74px" oninput="onPaperDimsChange()">
       <span style="color:var(--text-muted);font-size:0.72rem;">×</span>
-      <input type="number" id="paper-h" min="1" step="1" value="218" style="width:74px" oninput="onPaperDimsChange()">
+      <input type="number" id="paper-h" min="0.1" step="0.1" value="8.583" style="width:74px" oninput="onPaperDimsChange()">
+      <select id="paper-units" onchange="onUnitsToggle()" style="font-size:0.72rem;padding:4px 8px">
+        <option value="in" selected>in</option>
+        <option value="mm">mm</option>
+      </select>
       <span class="divider" style="height:18px;"></span>
-      <button onclick="scaleSvg(0.9)" style="font-size:0.72rem;padding:4px 10px">Scale −</button>
-      <button onclick="scaleSvg(1.1111111)" style="font-size:0.72rem;padding:4px 10px">Scale +</button>
-      <span class="divider" style="height:18px;"></span>
-      <button onclick="alignSvg('left')" style="font-size:0.72rem;padding:4px 10px">Left</button>
-      <button onclick="alignSvg('center_x')" style="font-size:0.72rem;padding:4px 10px">Center</button>
-      <button onclick="alignSvg('right')" style="font-size:0.72rem;padding:4px 10px">Right</button>
-      <button onclick="alignSvg('top')" style="font-size:0.72rem;padding:4px 10px">Top</button>
-      <button onclick="alignSvg('center_y')" style="font-size:0.72rem;padding:4px 10px">Mid</button>
-      <button onclick="alignSvg('bottom')" style="font-size:0.72rem;padding:4px 10px">Bottom</button>
-      <button onclick="alignSvg('center')" style="font-size:0.72rem;padding:4px 10px">Center Both</button>
+      <button class="icon-btn" title="Align left" onclick="alignSvg('left')"><span class="icon">
+        <svg viewBox="0 0 24 24"><path d="M4 4v16"/><path d="M8 7h12"/><path d="M8 12h9"/><path d="M8 17h12"/></svg>
+      </span></button>
+      <button class="icon-btn" title="Center X" onclick="alignSvg('center_x')"><span class="icon">
+        <svg viewBox="0 0 24 24"><path d="M12 4v16"/><path d="M4 8h16"/><path d="M6 16h12"/></svg>
+      </span></button>
+      <button class="icon-btn" title="Align right" onclick="alignSvg('right')"><span class="icon">
+        <svg viewBox="0 0 24 24"><path d="M20 4v16"/><path d="M4 7h12"/><path d="M7 12h9"/><path d="M4 17h12"/></svg>
+      </span></button>
+      <button class="icon-btn" title="Align top" onclick="alignSvg('top')"><span class="icon">
+        <svg viewBox="0 0 24 24"><path d="M4 4h16"/><path d="M7 8v12"/><path d="M12 8v9"/><path d="M17 8v12"/></svg>
+      </span></button>
+      <button class="icon-btn" title="Center Y" onclick="alignSvg('center_y')"><span class="icon">
+        <svg viewBox="0 0 24 24"><path d="M4 12h16"/><path d="M8 4v16"/><path d="M16 6v12"/></svg>
+      </span></button>
+      <button class="icon-btn" title="Align bottom" onclick="alignSvg('bottom')"><span class="icon">
+        <svg viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M7 4v12"/><path d="M12 7v9"/><path d="M17 4v12"/></svg>
+      </span></button>
+      <button class="icon-btn" title="Center both" onclick="alignSvg('center')"><span class="icon">
+        <svg viewBox="0 0 24 24"><path d="M12 4v16"/><path d="M4 12h16"/><path d="M7 7h10"/><path d="M7 17h10"/></svg>
+      </span></button>
       <span style="flex:1"></span>
-      <div style="font-size:0.7rem;color:var(--text-muted)">Tip: wheel zooms view only</div>
+      <div style="font-size:0.7rem;color:var(--text-muted)">Wheel scales artwork (real)</div>
     </div>
 
     <div id="preview-toolbar" style="padding:10px 12px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
       <div style="font-weight:700; font-size:0.8rem; color:var(--text); margin-right:10px;">Preview</div>
-      <button id="sel-pan" onclick="setSelTool('pan')" style="font-size:0.72rem;padding:4px 10px">Pan</button>
-      <button id="sel-rect" class="active" onclick="setSelTool('rect')" style="font-size:0.72rem;padding:4px 10px">Rect</button>
-      <button id="sel-circle" onclick="setSelTool('circle')" style="font-size:0.72rem;padding:4px 10px">Circle</button>
-      <button id="sel-lasso" onclick="setSelTool('lasso')" style="font-size:0.72rem;padding:4px 10px">Lasso</button>
-      <span style="flex:1"></span>
+      <button id="sel-pan" class="icon-btn" onclick="setSelTool('pan')" title="Move artwork"><span class="icon">
+        <svg viewBox="0 0 24 24"><path d="M12 2v20"/><path d="M2 12h20"/><path d="M12 2l3 3"/><path d="M12 2l-3 3"/><path d="M12 22l3-3"/><path d="M12 22l-3-3"/><path d="M2 12l3-3"/><path d="M2 12l3 3"/><path d="M22 12l-3-3"/><path d="M22 12l-3 3"/></svg>
+      </span></button>
+      <button id="sel-rect" class="icon-btn active" onclick="setSelTool('rect')" title="Rect mask"><span class="icon">
+        <svg viewBox="0 0 24 24"><rect x="5" y="6" width="14" height="12"/></svg>
+      </span></button>
+      <button id="sel-circle" class="icon-btn" onclick="setSelTool('circle')" title="Circle mask"><span class="icon">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></svg>
+      </span></button>
+      <button id="sel-lasso" class="icon-btn" onclick="setSelTool('lasso')" title="Lasso mask"><span class="icon">
+        <svg viewBox="0 0 24 24"><path d="M7 8c2-3 8-3 10 0s0 7-4 8-7-1-7-4 4-4 7-2"/></svg>
+      </span></button>
       <button class="primary" onclick="extractSelectionToNewLayer()" style="font-size:0.72rem;padding:4px 10px">Extract to New Layer</button>
       <button onclick="svgUndo()" style="font-size:0.72rem;padding:4px 10px">Undo</button>
+      <span style="flex:1"></span>
       <button onclick="resetSvgView()" style="font-size:0.72rem;padding:4px 10px">Reset View</button>
     </div>
 
@@ -1116,13 +1142,26 @@ function showSvgPreview(data) {
 }
 
 function toggleLayer(name, enabled) {
-  api('/api/layers/enable', {layer:name, enabled});
+  (async () => {
+    await api('/api/layers/enable', {layer:name, enabled});
+    // Refresh preview so the eye state and preview match exactly.
+    const p = await apiGet('/api/svg/preview');
+    if (p && p.layers) {
+      previewData = p;
+      showSvgPreview(p);
+      renderLayersPanel(p.layers);
+    }
+  })();
 }
 
 function getPaperDims() {
-  const w = parseFloat(document.getElementById('paper-w')?.value) || 300;
-  const h = parseFloat(document.getElementById('paper-h')?.value) || 218;
-  return {w: Math.max(1, w), h: Math.max(1, h)};
+  const units = document.getElementById('paper-units')?.value || 'in';
+  const wIn = parseFloat(document.getElementById('paper-w')?.value);
+  const hIn = parseFloat(document.getElementById('paper-h')?.value);
+  const wRaw = Number.isFinite(wIn) ? wIn : (units === 'in' ? 11.811 : 300);
+  const hRaw = Number.isFinite(hIn) ? hIn : (units === 'in' ? 8.583 : 218);
+  const mmPer = units === 'in' ? 25.4 : 1.0;
+  return {w: Math.max(1, wRaw * mmPer), h: Math.max(1, hRaw * mmPer)};
 }
 
 function renderLayersPanel(layers) {
@@ -1142,6 +1181,7 @@ function renderLayersPanel(layers) {
     row.onclick = () => { activeLayerName = l.name; renderLayersPanel(layers); };
 
     const thumbSvg = makeLayerThumbSvg(l, paper.w, paper.h);
+    const eyeLabel = l.enabled ? '👁' : '🚫';
     row.innerHTML = `
       <div class="layer-thumb"></div>
       <div class="layer-meta">
@@ -1149,7 +1189,7 @@ function renderLayersPanel(layers) {
         <div class="sub">${l.path_count} paths • ${l.distance_mm} mm</div>
       </div>
       <div class="layer-actions">
-        <button class="eye" title="Toggle visibility" onclick="event.stopPropagation(); toggleLayer('${l.name}', ${!l.enabled});">👁</button>
+        <button class="eye" title="Toggle visibility" onclick="event.stopPropagation(); toggleLayer('${l.name}', ${!l.enabled});">${eyeLabel}</button>
         <button class="eye" title="Plot layer" onclick="event.stopPropagation(); plotLayer('${l.name}');">▶</button>
       </div>
     `;
@@ -1215,7 +1255,7 @@ svgPreviewContainer.addEventListener('mousedown', e => {
     panStart = { x: e.clientX, y: e.clientY };
     const svg = document.getElementById('svg-preview');
     const vb = svg?.viewBox?.baseVal;
-    viewVbStart = vb ? {x: vb.x, y: vb.y, w: vb.width, h: vb.height} : null;
+    viewVbStart = vb ? {x: vb.x, y: vb.y, w: vb.width, h: vb.height, mouseX: e.clientX, mouseY: e.clientY} : null;
     svgPreviewContainer.style.cursor = 'grabbing';
     return;
   }
@@ -1259,11 +1299,7 @@ window.addEventListener('mousemove', e => {
 
   if (isPanning) {
     e.preventDefault();
-    if (viewVbStart) {
-      const dx = (e.clientX - panStart.x) * ratioX;
-      const dy = (e.clientY - panStart.y) * ratioY;
-      svg.setAttribute('viewBox', `${(viewVbStart.x - dx).toFixed(3)} ${(viewVbStart.y - dy).toFixed(3)} ${viewVbStart.w.toFixed(3)} ${viewVbStart.h.toFixed(3)}`);
-    }
+    // no live view pan — pan tool moves artwork on mouseup so preview == plot
     return;
   }
   
@@ -1306,6 +1342,19 @@ window.addEventListener('mouseup', e => {
   if (isPanning) {
     isPanning = false;
     svgPreviewContainer.style.cursor = 'default';
+    // Move artwork by drag delta in paper units (real geometry translate).
+    if (viewVbStart && previewData) {
+      const svg = document.getElementById('svg-preview');
+      const vb = svg.viewBox.baseVal;
+      const rect = svg.getBoundingClientRect();
+      const ratioX = vb.width / rect.width;
+      const ratioY = vb.height / rect.height;
+      const dx = (e.clientX - panStart.x) * ratioX;
+      const dy = (e.clientY - panStart.y) * ratioY;
+      // dragging right should move artwork right (positive dx)
+      translateSvg(dx, dy);
+    }
+    viewVbStart = null;
   }
   
   if (isDrawing && selStart) {
@@ -1344,27 +1393,9 @@ window.addEventListener('mouseup', e => {
 
 svgPreviewContainer.addEventListener('wheel', e => {
   e.preventDefault();
-  
-  const svg = document.getElementById('svg-preview');
-  if (!svg || !svg.viewBox.baseVal) return;
-  
-  const rect = svg.getBoundingClientRect();
-  const vb = svg.viewBox.baseVal;
-  
-  // Mouse position in screen pixels relative to SVG element
-  const mouseX = e.clientX - rect.left;
-  const mouseY = e.clientY - rect.top;
-  
-  // Mouse position in SVG paper units
-  const paperX = vb.x + (mouseX / rect.width) * vb.width;
-  const paperY = vb.y + (mouseY / rect.height) * vb.height;
-  
-  const zoomFactor = e.deltaY < 0 ? 0.9 : 1.1; // smaller viewBox => zoom in
-  const newW = Math.max(5, Math.min(50000, vb.width * zoomFactor));
-  const newH = Math.max(5, Math.min(50000, vb.height * zoomFactor));
-  const newX = paperX - (mouseX / rect.width) * newW;
-  const newY = paperY - (mouseY / rect.height) * newH;
-  svg.setAttribute('viewBox', `${newX.toFixed(3)} ${newY.toFixed(3)} ${newW.toFixed(3)} ${newH.toFixed(3)}`);
+  if (!previewData) return;
+  const factor = e.deltaY < 0 ? 1.05 : 0.95;
+  queueWheelScale(factor);
 });
 
 async function extractSelectionToNewLayer() {
@@ -1618,6 +1649,29 @@ async function scaleSvg(factor) {
   }
 }
 
+let wheelScaleFactor = 1.0;
+let wheelScaleTimer = null;
+function queueWheelScale(f) {
+  wheelScaleFactor *= f;
+  if (wheelScaleTimer) clearTimeout(wheelScaleTimer);
+  wheelScaleTimer = setTimeout(async () => {
+    const factor = wheelScaleFactor;
+    wheelScaleFactor = 1.0;
+    await scaleSvg(factor);
+    resetSvgView(); // keep fit-to-window view
+  }, 80);
+}
+
+async function translateSvg(dx, dy) {
+  if (!previewData) return;
+  const d = await api('/api/svg/translate', {dx, dy});
+  if (d && d.preview) {
+    previewData = d.preview;
+    showSvgPreview(d.preview);
+    renderLayersPanel(d.preview.layers);
+  }
+}
+
 function resetSvgView() {
   if (!previewData) return;
   const paper = getPaperDims();
@@ -1646,6 +1700,25 @@ async function onPaperDimsChange() {
   }, 250);
 }
 
+function onUnitsToggle() {
+  const units = document.getElementById('paper-units')?.value || 'in';
+  const paper = getPaperDims(); // returns mm using current units + inputs
+  const wMm = paper.w, hMm = paper.h;
+  const wEl = document.getElementById('paper-w');
+  const hEl = document.getElementById('paper-h');
+  if (!wEl || !hEl) return;
+  if (units === 'in') {
+    wEl.value = (wMm / 25.4).toFixed(3);
+    hEl.value = (hMm / 25.4).toFixed(3);
+    wEl.step = "0.001"; hEl.step = "0.001";
+  } else {
+    wEl.value = (wMm).toFixed(2);
+    hEl.value = (hMm).toFixed(2);
+    wEl.step = "0.1"; hEl.step = "0.1";
+  }
+  onPaperDimsChange();
+}
+
 // ===== Init =====
 (async function init() {
   const cfg = await apiGet('/api/config');
@@ -1655,8 +1728,11 @@ async function onPaperDimsChange() {
       document.getElementById('s-bed-display').textContent = `${cfg.bed_width_mm} × ${cfg.bed_height_mm} mm`;
       const pw = document.getElementById('paper-w');
       const ph = document.getElementById('paper-h');
-      if (pw) pw.value = cfg.bed_width_mm;
-      if (ph) ph.value = cfg.bed_height_mm;
+      if (pw && ph) {
+        // default to inches display
+        pw.value = (cfg.bed_width_mm / 25.4).toFixed(3);
+        ph.value = (cfg.bed_height_mm / 25.4).toFixed(3);
+      }
     }
     if (cfg.last_serial_port) {
       await refreshPorts();
