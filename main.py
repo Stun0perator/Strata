@@ -412,6 +412,17 @@ async def load_profile(name: str):
     if p is None:
         return JSONResponse({"error": "Profile not found"}, 404)
     config.set("last_profile", name)
+    try:
+        model_id = int(p.get("model")) if p.get("model") is not None else None
+    except (TypeError, ValueError):
+        model_id = None
+    dims = AXIDRAW_MODELS.get(model_id) if model_id is not None else None
+    if dims:
+        config.update_config({
+            "bed_width_mm": dims["width"],
+            "bed_height_mm": dims["height"],
+        })
+        config.set("last_model", model_id)
     serial_mgr.clear_live_overrides()
     return {"ok": True, "profile": p, "name": name}
 

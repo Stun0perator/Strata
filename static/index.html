@@ -564,7 +564,7 @@ label { font-size:0.8rem; color:var(--text-muted); }
           <option value="7">AxiDraw MiniKit</option>
         </select></div>
       <div class="dim-display">Bed: <strong id="s-bed-display">300 × 218 mm</strong></div>
-      <div class="form-row" style="margin-top:4px"><label><input type="checkbox" id="s-const-speed"> Constant Velocity</label></div>
+      <div class="form-row" style="margin-top:4px"><label><input type="checkbox" id="s-const-speed" onchange="scheduleProfileAutosave()"> Constant Velocity</label></div>
     </div>
 
       <div id="home-vpype-wrap" style="display:flex; gap:10px;">
@@ -927,6 +927,7 @@ function updateBedDisplay(modelId) {
 async function onModelChange(modelId) {
   updateBedDisplay(modelId);
   const d = await api('/api/model/select', {model: +modelId});
+  if (d && d.ok) scheduleProfileAutosave();
   if (d && d.ok) toast(`Model: ${d.name} (${d.width}×${d.height}mm)`, 'info');
 }
 
@@ -971,6 +972,10 @@ function populateSliders(p) {
     }
   }
   if (p.const_speed !== undefined) document.getElementById('s-const-speed').checked = p.const_speed;
+  if (p.model !== undefined) {
+    document.getElementById('s-model').value = p.model;
+    updateBedDisplay(p.model);
+  }
 }
 function populatePaintSettings(p) {
   if (p.paint_enabled !== undefined) document.getElementById('p-enabled').checked = p.paint_enabled;
@@ -1006,6 +1011,16 @@ function liveOverrideCommit(key, val) {
   const vid = SLIDER_LABEL_IDS[key];
   if (vid) document.getElementById(vid).textContent = val;
   api('/api/override', {[key]: val});
+  scheduleProfileAutosave();
+}
+let profileAutosaveTimer = null;
+function scheduleProfileAutosave() {
+  clearTimeout(profileAutosaveTimer);
+  profileAutosaveTimer = setTimeout(saveActiveProfileSilently, 300);
+}
+async function saveActiveProfileSilently() {
+  if (!activeProfile) return;
+  await api('/api/profiles/'+encodeURIComponent(activeProfile), gatherProfileData());
 }
 function gatherProfileData() {
   return {
@@ -1016,6 +1031,7 @@ function gatherProfileData() {
     accel: +document.getElementById('s-accel').value,
     pen_rate_lower: +document.getElementById('s-rate-lower').value,
     pen_rate_raise: +document.getElementById('s-rate-raise').value,
+    model: +document.getElementById('s-model').value,
     const_speed: document.getElementById('s-const-speed').checked,
     paint_enabled: document.getElementById('p-enabled').checked,
     dip_threshold_mm: +document.getElementById('p-dip-thresh').value,
