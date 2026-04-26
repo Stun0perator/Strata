@@ -31,7 +31,9 @@ MICROSTEPS_PER_MM = STEPS_PER_MM_LOGICAL * MICROSTEP_FACTOR  # 80
 
 QM_POLL_INTERVAL_S = 0.05
 QM_MAX_WAIT_S = 30.0
-MAX_SPEED_MM_S = 110.0
+MAX_DRAW_SPEED_MM_S = 300.0
+MAX_TRAVEL_SPEED_MM_S = 400.0
+MAX_SPEED_MM_S = MAX_TRAVEL_SPEED_MM_S
 MAX_ACCEL_MM_S2 = 800.0
 
 # EBB rate scale (saxi ebb.ts)
@@ -332,8 +334,8 @@ class SerialManager:
         p = self.config.get_profile(name)
         return p if p else self.config.get_profile("Default") or {}
 
-    def _pct_to_speed_mm_s(self, pct: float) -> float:
-        return max(1.0, (pct / 100.0) * MAX_SPEED_MM_S)
+    def _speed_value_mm_s(self, value: float, max_speed: float) -> float:
+        return max(1.0, min(float(value), max_speed))
 
     def _accel_mm_s2(self) -> float:
         profile = self._active_profile()
@@ -347,12 +349,13 @@ class SerialManager:
         with self._overrides_lock:
             o = dict(self.live_overrides)
         if swirl_sp is not None:
-            return self._pct_to_speed_mm_s(float(swirl_sp))
+            return self._speed_value_mm_s(float(swirl_sp), MAX_DRAW_SPEED_MM_S)
         if tag in ("draw", "swirl"):
-            pct = float(o.get("speed_pendown", profile.get("speed_pendown", 25)))
+            speed = float(o.get("speed_pendown", profile.get("speed_pendown", 25)))
+            return self._speed_value_mm_s(speed, MAX_DRAW_SPEED_MM_S)
         else:
-            pct = float(o.get("speed_penup", profile.get("speed_penup", 75)))
-        return self._pct_to_speed_mm_s(pct)
+            speed = float(o.get("speed_penup", profile.get("speed_penup", 75)))
+            return self._speed_value_mm_s(speed, MAX_TRAVEL_SPEED_MM_S)
 
     def _move_time_trapezoid_s(self, distance_mm: float) -> float:
         if distance_mm <= 1e-9:

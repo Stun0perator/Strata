@@ -534,11 +534,11 @@ label { font-size:0.8rem; color:var(--text-muted); }
         background:rgba(188,140,255,0.1);padding:2px 6px;border-radius:10px;display:inline-block;margin-bottom:4px">Default</span>
 
       <div class="form-row"><label>Draw Speed</label>
-        <input type="range" min="1" max="100" value="25" id="s-speed-down" oninput="sliderPreview('speed_pendown',this.value)" onchange="liveOverrideCommit('speed_pendown',this.value)">
-        <span class="val" id="v-speed-down">25</span></div>
+        <input type="range" min="1" max="300" value="25" id="s-speed-down" oninput="sliderPreview('speed_pendown',this.value)" onchange="liveOverrideCommit('speed_pendown',this.value)">
+        <span class="val" id="v-speed-down">25 mm/s</span></div>
       <div class="form-row"><label>Travel Speed</label>
-        <input type="range" min="1" max="100" value="75" id="s-speed-up" oninput="sliderPreview('speed_penup',this.value)" onchange="liveOverrideCommit('speed_penup',this.value)">
-        <span class="val" id="v-speed-up">75</span></div>
+        <input type="range" min="1" max="400" value="75" id="s-speed-up" oninput="sliderPreview('speed_penup',this.value)" onchange="liveOverrideCommit('speed_penup',this.value)">
+        <span class="val" id="v-speed-up">75 mm/s</span></div>
       <div class="form-row"><label>Pen Down Ht</label>
         <input type="range" min="0" max="100" value="20" id="s-pen-down" oninput="sliderPreview('pen_pos_down',this.value)" onchange="liveOverrideCommit('pen_pos_down',this.value)">
         <span class="val" id="v-pen-down">20</span></div>
@@ -968,7 +968,7 @@ function populateSliders(p) {
   for (const [k,[sid,vid]] of Object.entries(map)) {
     if (p[k] !== undefined) {
       document.getElementById(sid).value = p[k];
-      document.getElementById(vid).textContent = p[k];
+      document.getElementById(vid).textContent = sliderLabelText(k, p[k]);
     }
   }
   if (p.const_speed !== undefined) document.getElementById('s-const-speed').checked = p.const_speed;
@@ -999,17 +999,24 @@ const SLIDER_LABEL_IDS = {
   speed_pendown: 'v-speed-down', speed_penup: 'v-speed-up', pen_pos_down: 'v-pen-down',
   pen_pos_up: 'v-pen-up', accel: 'v-accel', pen_rate_lower: 'v-rate-lower', pen_rate_raise: 'v-rate-raise',
 };
+const SLIDER_LABEL_UNITS = {
+  speed_pendown: ' mm/s',
+  speed_penup: ' mm/s',
+};
+function sliderLabelText(key, val) {
+  return `${val}${SLIDER_LABEL_UNITS[key] || ''}`;
+}
 /** Update numeric labels while dragging — does not call the API. */
 function sliderPreview(key, val) {
   val = parseFloat(val);
   const vid = SLIDER_LABEL_IDS[key];
-  if (vid) document.getElementById(vid).textContent = val;
+  if (vid) document.getElementById(vid).textContent = sliderLabelText(key, val);
 }
 /** Send live override once when the slider value commits (release / keyboard). */
 function liveOverrideCommit(key, val) {
   val = parseFloat(val);
   const vid = SLIDER_LABEL_IDS[key];
-  if (vid) document.getElementById(vid).textContent = val;
+  if (vid) document.getElementById(vid).textContent = sliderLabelText(key, val);
   api('/api/override', {[key]: val});
   scheduleProfileAutosave();
 }

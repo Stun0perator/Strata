@@ -956,11 +956,11 @@ class SVGProcessor:
         total = self._current.total_distance()
         return max(0, int(total / dip_threshold_mm))
 
-    def estimate_time_seconds(self, speed_pct: float = 25, travel_speed_pct: float = 75) -> float:
+    def estimate_time_seconds(self, speed_mm_s: float = 25, travel_speed_mm_s: float = 75) -> float:
         if not self._current:
             return 0
-        draw_speed = max(1, (speed_pct / 100.0) * 110.0)
-        travel_speed = max(1, (travel_speed_pct / 100.0) * 110.0)
+        draw_speed = max(1, min(float(speed_mm_s), 300.0))
+        travel_speed = max(1, min(float(travel_speed_mm_s), 400.0))
         draw_dist = self._current.total_distance()
         travel_dist = draw_dist * 0.3  # rough estimate of travel overhead
         return (draw_dist / draw_speed) + (travel_dist / travel_speed)
