@@ -141,7 +141,21 @@ label { font-size:0.8rem; color:var(--text-muted); }
 
 /* SVG preview */
 
-#svg-preview-container svg { width:100%; height:100%; }
+#svg-preview-container svg {
+  display:block;
+  flex:0 0 auto;
+  max-width:100%;
+  max-height:100%;
+}
+.number-no-spin::-webkit-outer-spin-button,
+.number-no-spin::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.number-no-spin {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
 .drop-zone { border:2px dashed var(--border); border-radius:6px; padding:12px; text-align:center;
   color:var(--text-muted); transition:all .2s; margin-bottom:6px; cursor:pointer; font-size:0.78rem; }
 .drop-zone:hover, .drop-zone.dragover { border-color:var(--accent); color:var(--accent); background:rgba(88,166,255,0.05); }
@@ -550,9 +564,9 @@ label { font-size:0.8rem; color:var(--text-muted); }
   <div id="right-panel" style="width:58%; background:var(--surface2); display:flex; flex-direction:column; overflow:hidden;">
     <div id="paper-settings" style="padding:8px 12px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:center; font-size:0.75rem; flex-wrap:wrap;">
       <label>Canvas:</label>
-      <input type="number" id="paper-w" min="0.1" step="0.1" value="11.811" style="width:74px" oninput="onPaperDimsChange()">
+      <input type="number" id="paper-w" class="number-no-spin" min="0.1" step="0.1" value="8.5" style="width:74px" oninput="onPaperDimsChange()">
       <span style="color:var(--text-muted);font-size:0.72rem;">×</span>
-      <input type="number" id="paper-h" min="0.1" step="0.1" value="8.583" style="width:74px" oninput="onPaperDimsChange()">
+      <input type="number" id="paper-h" class="number-no-spin" min="0.1" step="0.1" value="11" style="width:74px" oninput="onPaperDimsChange()">
       <select id="paper-units" onchange="onUnitsToggle()" style="font-size:0.72rem;padding:4px 8px">
         <option value="in" selected>in</option>
         <option value="mm">mm</option>
@@ -605,7 +619,7 @@ label { font-size:0.8rem; color:var(--text-muted); }
 
     <div style="display:flex; flex:1; overflow:hidden;">
       <div id="svg-preview-container" style="flex:1; position:relative; overflow:auto; display:flex; align-items:center; justify-content:center; padding:20px; background:#e0e0e0;">
-        <svg id="svg-preview" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;box-shadow: 0 4px 12px rgba(0,0,0,0.2); background:#fff;" viewBox="0 0 300 218"></svg>
+        <svg id="svg-preview" preserveAspectRatio="xMidYMid meet" style="box-shadow: 0 4px 12px rgba(0,0,0,0.2); background:#fff;" viewBox="0 0 215.9 279.4"></svg>
       </div>
 
       <div id="layers-panel">
@@ -825,13 +839,6 @@ function updateBedDisplay(modelId) {
   const m = MODEL_DIMS[+modelId];
   if (!m) return;
   document.getElementById('s-bed-display').textContent = `${m.w} x ${m.h} mm`;
-  setPaperInputsFromMm(m.w, m.h);
-  const svg = document.getElementById('svg-preview');
-  if (svg) {
-    svg.setAttribute('viewBox', `0 0 ${m.w} ${m.h}`);
-    applyCanvasAspect(m.w, m.h);
-  }
-  if (previewData) resetSvgView();
 }
 
 async function onModelChange(modelId) {
@@ -1166,8 +1173,8 @@ function getPaperDims() {
   const units = document.getElementById('paper-units')?.value || 'in';
   const wIn = parseFloat(document.getElementById('paper-w')?.value);
   const hIn = parseFloat(document.getElementById('paper-h')?.value);
-  const wRaw = Number.isFinite(wIn) ? wIn : (units === 'in' ? 11.811 : 300);
-  const hRaw = Number.isFinite(hIn) ? hIn : (units === 'in' ? 8.583 : 218);
+  const wRaw = Number.isFinite(wIn) ? wIn : (units === 'in' ? 8.5 : 215.9);
+  const hRaw = Number.isFinite(hIn) ? hIn : (units === 'in' ? 11 : 279.4);
   const mmPer = units === 'in' ? 25.4 : 1.0;
   return {w: Math.max(1, wRaw * mmPer), h: Math.max(1, hRaw * mmPer)};
 }
@@ -1779,9 +1786,9 @@ async function translateSvg(dx, dy) {
 }
 
 function resetSvgView() {
-  if (!previewData) return;
   const paper = getPaperDims();
   const svg = document.getElementById('svg-preview');
+  if (!svg) return;
   svg.setAttribute('viewBox', `0 0 ${paper.w} ${paper.h}`);
   applyCanvasAspect(paper.w, paper.h);
   const existing = document.getElementById('sel-preview-shape');
@@ -1792,28 +1799,38 @@ function resetSvgView() {
 let paperDimsDebounce = null;
 async function onPaperDimsChange() {
   // Keep the preview canvas reflecting actual dimensions, and keep soft limits in sync.
+  const paper = getPaperDims();
+  const svg = document.getElementById('svg-preview');
+  if (svg) {
+    svg.setAttribute('viewBox', `0 0 ${paper.w} ${paper.h}`);
+    applyCanvasAspect(paper.w, paper.h);
+  }
   if (paperDimsDebounce) clearTimeout(paperDimsDebounce);
   paperDimsDebounce = setTimeout(async () => {
     const paper = getPaperDims();
-    const svg = document.getElementById('svg-preview');
-    if (svg) {
-      svg.setAttribute('viewBox', `0 0 ${paper.w} ${paper.h}`);
-      applyCanvasAspect(paper.w, paper.h);
-    }
-
     // Update backend bed dims so motion soft-limits match the UI dimensions.
     await api('/api/config', {bed_width_mm: paper.w, bed_height_mm: paper.h});
-    // Avoid heavy preview rebuild on every keystroke; viewBox/aspect is enough.
-    if (previewData) resetSvgView();
   }, 600);
 }
 
 function applyCanvasAspect(wMm, hMm) {
   const svg = document.getElementById('svg-preview');
   if (!svg) return;
-  // Help the white "paper" change shape immediately as dimensions change.
-  // CSS aspect-ratio is supported in modern browsers; safe no-op if not.
+  const container = document.getElementById('svg-preview-container');
+  if (!container) return;
+  const ratio = Math.max(0.001, wMm / hMm);
+  const pad = 40;
+  const availableW = Math.max(1, container.clientWidth - pad);
+  const availableH = Math.max(1, container.clientHeight - pad);
+  let drawW = availableW;
+  let drawH = drawW / ratio;
+  if (drawH > availableH) {
+    drawH = availableH;
+    drawW = drawH * ratio;
+  }
   svg.style.aspectRatio = `${wMm} / ${hMm}`;
+  svg.style.width = `${Math.max(1, Math.floor(drawW))}px`;
+  svg.style.height = `${Math.max(1, Math.floor(drawH))}px`;
 }
 
 function onUnitsToggle() {
@@ -1842,13 +1859,6 @@ function onUnitsToggle() {
     document.getElementById('auto-home-chk').checked = cfg.auto_home_on_connect !== false;
     if (cfg.bed_width_mm && cfg.bed_height_mm) {
       document.getElementById('s-bed-display').textContent = `${cfg.bed_width_mm} × ${cfg.bed_height_mm} mm`;
-      const pw = document.getElementById('paper-w');
-      const ph = document.getElementById('paper-h');
-      if (pw && ph) {
-        // default to inches display
-        pw.value = (cfg.bed_width_mm / 25.4).toFixed(3);
-        ph.value = (cfg.bed_height_mm / 25.4).toFixed(3);
-      }
     }
     if (cfg.last_serial_port) {
       await refreshPorts();
@@ -1873,6 +1883,11 @@ function onUnitsToggle() {
   await loadFiles();
   const st = await apiGet('/api/state');
   if (st) updateTelemetry(st);
+  onPaperDimsChange();
+  window.addEventListener('resize', () => {
+    const paper = getPaperDims();
+    applyCanvasAspect(paper.w, paper.h);
+  });
 })();
 </script>
 </body>
