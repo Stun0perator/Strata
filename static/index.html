@@ -1262,6 +1262,8 @@ let selStart = null;
 let lassoPoints = [];
 let viewVbStart = null;
 let skew = { active: false, corners: null, handleIdx: -1 };
+let livePan = { dx: 0, dy: 0 };
+let liveScale = { factor: 1.0, cx: 0, cy: 0 };
 
 // Initialize default tool highlighting
 document.addEventListener('DOMContentLoaded', () => {
@@ -1282,6 +1284,7 @@ svgPreviewContainer.addEventListener('mousedown', e => {
   if (selTool === 'pan' || e.button === 1) { 
     e.preventDefault();
     isPanning = true;
+    livePan = { dx: 0, dy: 0 };
     panStart = { x: e.clientX, y: e.clientY };
     const svg = document.getElementById('svg-preview');
     const vb = svg?.viewBox?.baseVal;
@@ -1330,7 +1333,10 @@ window.addEventListener('mousemove', e => {
 
   if (isPanning) {
     e.preventDefault();
-    // no live view pan — pan tool moves artwork on mouseup so preview == plot
+    livePan.dx = (e.clientX - panStart.x) * ratioX;
+    livePan.dy = (e.clientY - panStart.y) * ratioY;
+    applyLivePreviewTransform();
+    // Commit the real geometry on mouseup; keep this path lightweight while dragging.
     return;
   }
 
@@ -1397,7 +1403,10 @@ window.addEventListener('mouseup', e => {
       const dx = (e.clientX - panStart.x) * ratioX;
       const dy = (e.clientY - panStart.y) * ratioY;
       // dragging right should move artwork right (positive dx)
-      translateSvg(dx, dy);
+      livePan.dx = dx;
+      livePan.dy = dy;
+      applyLivePreviewTransform();
+      translateSvg(dx, dy, {preserveLiveTransform: true});
     }
     viewVbStart = null;
   }
@@ -1751,11 +1760,42 @@ async function alignSvg(mode) {
   }
 }
 
+function previewBounds() {
+  if (!previewData) return {minX: 0, minY: 0, maxX: 1, maxY: 1};
+  return {
+    minX: Number.isFinite(previewData.min_x) ? previewData.min_x : 0,
+    minY: Number.isFinite(previewData.min_y) ? previewData.min_y : 0,
+    maxX: Number.isFinite(previewData.max_x) ? previewData.max_x : 1,
+    maxY: Number.isFinite(previewData.max_y) ? previewData.max_y : 1,
+  };
+}
+
+function applyLivePreviewTransform() {
+  const group = document.getElementById('svg-paths-group');
+  if (!group) return;
+  const transforms = [];
+  if (Math.abs(livePan.dx) > 0.001 || Math.abs(livePan.dy) > 0.001) {
+    transforms.push(`translate(${livePan.dx} ${livePan.dy})`);
+  }
+  if (Math.abs(liveScale.factor - 1) > 0.001) {
+    transforms.push(`translate(${liveScale.cx} ${liveScale.cy}) scale(${liveScale.factor}) translate(${-liveScale.cx} ${-liveScale.cy})`);
+  }
+  group.setAttribute('transform', transforms.join(' '));
+}
+
+function clearLivePreviewTransform() {
+  livePan = { dx: 0, dy: 0 };
+  liveScale = { factor: 1.0, cx: 0, cy: 0 };
+  const group = document.getElementById('svg-paths-group');
+  if (group) group.removeAttribute('transform');
+}
+
 async function scaleSvg(factor) {
   if (!previewData) return toast('Load an SVG first','error');
   const d = await api('/api/svg/scale', {factor});
   if (d && d.preview) {
     previewData = d.preview;
+    clearLivePreviewTransform();
     showSvgPreview(d.preview);
     renderLayersPanel(d.preview.layers);
     toast('Scaled','success');
@@ -1766,22 +1806,28 @@ let wheelScaleFactor = 1.0;
 let wheelScaleTimer = null;
 function queueWheelScale(f) {
   wheelScaleFactor *= f;
+  liveScale.factor *= f;
+  const b = previewBounds();
+  liveScale.cx = (b.minX + b.maxX) / 2;
+  liveScale.cy = (b.minY + b.maxY) / 2;
+  applyLivePreviewTransform();
   if (wheelScaleTimer) clearTimeout(wheelScaleTimer);
   wheelScaleTimer = setTimeout(async () => {
     const factor = wheelScaleFactor;
     wheelScaleFactor = 1.0;
     await scaleSvg(factor);
-    resetSvgView(); // keep fit-to-window view
   }, 1500);
 }
 
-async function translateSvg(dx, dy) {
+async function translateSvg(dx, dy, options = {}) {
   if (!previewData) return;
   const d = await api('/api/svg/translate', {dx, dy});
   if (d && d.preview) {
     previewData = d.preview;
+    if (!options.preserveLiveTransform) clearLivePreviewTransform();
     showSvgPreview(d.preview);
     renderLayersPanel(d.preview.layers);
+    if (options.preserveLiveTransform) clearLivePreviewTransform();
   }
 }
 
