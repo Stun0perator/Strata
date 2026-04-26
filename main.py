@@ -682,6 +682,30 @@ async def queue_reorder(request: Request):
 # ---- plot execution ----
 
 
+def _validate_plot_bounds(args: dict) -> Optional[str]:
+    if not svg_proc.has_svg or not svg_proc.current:
+        return None
+    try:
+        scale = float(args.get("scale", 1.0))
+        offset_x = float(args.get("offset_x", 0.0))
+        offset_y = float(args.get("offset_y", 0.0))
+        bed_w = float(config.get("bed_width_mm", 300) or 300)
+        bed_h = float(config.get("bed_height_mm", 218) or 218)
+    except (TypeError, ValueError):
+        return "Invalid plot transform"
+    d = svg_proc.current
+    min_x = d.min_x * scale + offset_x
+    max_x = d.max_x * scale + offset_x
+    min_y = d.min_y * scale + offset_y
+    max_y = d.max_y * scale + offset_y
+    if min(min_x, max_x) < -1 or min(min_y, max_y) < -1 or max(min_x, max_x) > bed_w + 1 or max(min_y, max_y) > bed_h + 1:
+        return (
+            f"Transformed artwork bounds ({min_x:.1f}, {min_y:.1f}) to "
+            f"({max_x:.1f}, {max_y:.1f}) exceed bed limits ({bed_w:.1f}x{bed_h:.1f}mm)"
+        )
+    return None
+
+
 @app.delete("/api/files/{filename}")
 async def delete_file(filename: str):
     path = UPLOAD_DIR / filename
@@ -795,6 +819,9 @@ async def start_plot(request: Request):
         return JSONResponse({"error": "Not connected"}, 400)
     if state.plot_state == PlotState.PLOTTING:
         return JSONResponse({"error": "Already plotting"}, 400)
+    err = _validate_plot_bounds(body)
+    if err:
+        return JSONResponse({"error": err}, 400)
     global plot_task
     plot_task = asyncio.create_task(execute_plot(dry=False, req_args=body))
     return {"ok": True}

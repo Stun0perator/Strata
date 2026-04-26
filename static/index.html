@@ -1189,9 +1189,13 @@ function showSvgStats(d) {
   el.style.display = '';
   const p = d.preview;
   const dips = d.estimated_dips !== undefined && d.estimated_dips !== null ? d.estimated_dips : '—';
-  const ets = d.estimated_time_s !== undefined && d.estimated_time_s !== null ? +d.estimated_time_s : 0;
+  let ets = d.estimated_time_s !== undefined && d.estimated_time_s !== null ? +d.estimated_time_s : 0;
+  if ((!Number.isFinite(ets) || ets <= 0) && p.total_distance_mm) {
+    ets = p.total_distance_mm / 25;
+  }
+  const timeLabel = ets < 60 ? `${Math.max(1, Math.round(ets))}s` : `${Math.max(1, Math.round(ets / 60))}min`;
   el.innerHTML = `<strong>${p.filename}</strong> — ${p.total_paths} paths, ${p.total_distance_mm}mm, ` +
-    `${p.layers.length} layers, ~${dips} dips, ~${Math.round(ets / 60)}min`;
+    `${p.layers.length} layers, ~${dips} dips, ~${timeLabel}`;
 }
 
 function showSvgPreview(data) {
@@ -1348,6 +1352,7 @@ let skew = { active: false, corners: null, handleIdx: -1 };
 let livePan = { dx: 0, dy: 0 };
 let liveScale = { factor: 1.0, cx: 0, cy: 0 };
 let pendingTransform = { dx: 0, dy: 0, scale: 1.0 };
+let liveTransformFrame = null;
 
 // Initialize default tool highlighting
 document.addEventListener('DOMContentLoaded', () => {
@@ -1419,8 +1424,8 @@ window.addEventListener('mousemove', e => {
     e.preventDefault();
     livePan.dx = (e.clientX - panStart.x) * ratioX;
     livePan.dy = (e.clientY - panStart.y) * ratioY;
-    applyLivePreviewTransform();
-    // Commit the real geometry on mouseup; keep this path lightweight while dragging.
+    scheduleLivePreviewTransform();
+    // Keep this path browser-only while dragging.
     return;
   }
 
@@ -1489,11 +1494,11 @@ window.addEventListener('mouseup', e => {
       // dragging right should move artwork right (positive dx)
       livePan.dx = dx;
       livePan.dy = dy;
-      applyLivePreviewTransform();
+      scheduleLivePreviewTransform();
       pendingTransform.dx += dx;
       pendingTransform.dy += dy;
       livePan = { dx: 0, dy: 0 };
-      applyLivePreviewTransform();
+      scheduleLivePreviewTransform();
     }
     viewVbStart = null;
   }
@@ -1715,9 +1720,7 @@ async function removeFromQueue(idx) {
 // ===== Plot Execution =====
 
 async function plotLayer(layerName) {
-  const committed = await commitPendingPreviewTransform();
-  if (!committed) { toast('Could not prepare artwork transform', 'error'); return; }
-  const d = await api('/api/plot/start', {layer_name: layerName});
+  const d = await api('/api/plot/start', {...getPendingPlotArgs(), layer_name: layerName});
   if (d && d.ok) toast(`Started plotting ${layerName}`, 'success');
   else if (d === null) toast('Could not start plot (see error above)', 'error');
 }
@@ -1725,9 +1728,7 @@ async function plotLayer(layerName) {
 async function startPlot() {
   if (!confirm('Start plot?')) return;
   plotSeconds = 0;
-  const committed = await commitPendingPreviewTransform();
-  if (!committed) { toast('Could not prepare artwork transform', 'error'); return; }
-  const d = await api('/api/plot/start');
+  const d = await api('/api/plot/start', getPendingPlotArgs());
   if (d && d.ok) toast('Plot started','success');
 }
 function pausePlot() { api('/api/plot/pause'); }
@@ -1883,10 +1884,22 @@ function applyLivePreviewTransform() {
   group.setAttribute('transform', transforms.join(' '));
 }
 
+function scheduleLivePreviewTransform() {
+  if (liveTransformFrame) return;
+  liveTransformFrame = requestAnimationFrame(() => {
+    liveTransformFrame = null;
+    applyLivePreviewTransform();
+  });
+}
+
 function clearLivePreviewTransform() {
   livePan = { dx: 0, dy: 0 };
   liveScale = { factor: 1.0, cx: 0, cy: 0 };
   pendingTransform = { dx: 0, dy: 0, scale: 1.0 };
+  if (liveTransformFrame) {
+    cancelAnimationFrame(liveTransformFrame);
+    liveTransformFrame = null;
+  }
   const group = document.getElementById('svg-paths-group');
   if (group) group.removeAttribute('transform');
 }
@@ -1898,35 +1911,19 @@ function hasPendingPreviewTransform() {
     Math.abs(wheelScaleFactor - 1.0) > 0.001;
 }
 
-async function commitPendingPreviewTransform() {
-  if (!previewData || !hasPendingPreviewTransform()) return true;
+function getPendingPlotArgs() {
   if (wheelScaleTimer) {
     clearTimeout(wheelScaleTimer);
     wheelScaleTimer = null;
   }
-  const scale = pendingTransform.scale * wheelScaleFactor;
-  const dx = pendingTransform.dx;
-  const dy = pendingTransform.dy;
+  const scale = pendingTransform.scale;
+  const b = previewBounds();
+  const cx = (b.minX + b.maxX) / 2;
+  const cy = (b.minY + b.maxY) / 2;
+  const offsetX = pendingTransform.dx + cx * (1 - scale);
+  const offsetY = pendingTransform.dy + cy * (1 - scale);
   wheelScaleFactor = 1.0;
-  let preview = null;
-  if (Math.abs(scale - 1.0) > 0.001) {
-    const d = await api('/api/svg/scale', {factor: scale});
-    if (!d || !d.preview) return false;
-    preview = d.preview;
-    previewData = preview;
-  }
-  if (Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001) {
-    const d = await api('/api/svg/translate', {dx, dy});
-    if (!d || !d.preview) return false;
-    preview = d.preview;
-    previewData = preview;
-  }
-  clearLivePreviewTransform();
-  if (preview) {
-    showSvgPreview(preview);
-    renderLayersPanel(preview.layers);
-  }
-  return true;
+  return {scale, offset_x: offsetX, offset_y: offsetY};
 }
 
 async function scaleSvg(factor) {
@@ -1947,7 +1944,7 @@ function queueWheelScale(f) {
   wheelScaleFactor *= f;
   pendingTransform.scale *= f;
   wheelScaleFactor = 1.0;
-  applyLivePreviewTransform();
+  scheduleLivePreviewTransform();
   if (wheelScaleTimer) clearTimeout(wheelScaleTimer);
   wheelScaleTimer = setTimeout(() => { wheelScaleTimer = null; }, 250);
 }
