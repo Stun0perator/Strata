@@ -626,10 +626,12 @@ class SerialManager:
     def _wait_motion_complete(self) -> bool:
         deadline = time.time() + QM_MAX_WAIT_S
         while time.time() < deadline:
+            if self._emergency_stop:
+                return False
             with self._serial_lock:
                 r = self._exchange("QM", read_timeout=0.5)
             parts = [p.strip() for p in r.replace("\n", "").split(",")]
-            if len(parts) >= 5 and parts[0].upper() == "QM":
+            if len(parts) >= 5:
                 try:
                     if parts[1] == "0" and parts[4] == "0":
                         return True
@@ -638,6 +640,16 @@ class SerialManager:
             time.sleep(QM_POLL_INTERVAL_S)
         logger.warning("QM wait timed out after %.0fs", QM_MAX_WAIT_S)
         return False
+
+    def _wait_while_paused_or_stopped(self) -> bool:
+        while True:
+            if self._emergency_stop or self.state.plot_state == PlotState.IDLE:
+                return False
+            with self._pause_lock:
+                paused = self._paused
+            if not paused:
+                return True
+            time.sleep(0.05)
 
     def _move_with_planner(self, dx_mm: float, dy_mm: float, speed_mm_s: float, wait: bool = True) -> bool:
         if abs(dx_mm) < 1e-9 and abs(dy_mm) < 1e-9:
@@ -883,6 +895,7 @@ class SerialManager:
     def resume(self):
         with self._pause_lock:
             self._paused = False
+        self._emergency_stop = False
         if self.state.plot_state == PlotState.PAUSED:
             self.state.update(plot_state=PlotState.PLOTTING)
         self._notify_state()
@@ -892,11 +905,16 @@ class SerialManager:
         with self._pause_lock:
             self._paused = True
         self._flush_queue()
+        try:
+            with self._serial_lock:
+                self._exchange("EM,0,0", read_timeout=0.5)
+                if self._ebb_sr_capable:
+                    self._exchange("SR,60000,0", read_timeout=0.5)
+        except Exception as e:
+            logger.warning("Emergency motor disable failed: %s", e)
         self.state.update(plot_state=PlotState.IDLE)
-        self._emergency_stop = False
         with self._pause_lock:
             self._paused = False
-        self.pen_up()
         self._notify_state()
         logger.warning("EMERGENCY STOP")
 
@@ -927,6 +945,7 @@ class SerialManager:
             self.pen_down()
 
     def enable_motors(self):
+        self._emergency_stop = False
         self.enqueue("_raw:EM,1,1", Priority.MANUAL)
         if self._ebb_sr_capable:
             self.enqueue("_raw:SR,0,1", Priority.MANUAL)
@@ -1083,8 +1102,12 @@ class SerialManager:
         for idx in range(1, len(clean_points)):
             distance += math.hypot(clean_points[idx][0] - clean_points[idx - 1][0], clean_points[idx][1] - clean_points[idx - 1][1])
 
-        for block in blocks:
+        for idx, block in enumerate(blocks):
+            if not self._wait_while_paused_or_stopped():
+                return False
             if not self._execute_lm_block(block):
+                return False
+            if idx % 16 == 15 and self._emergency_stop:
                 return False
         if not self._wait_motion_complete():
             return False
