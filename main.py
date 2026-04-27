@@ -1104,7 +1104,13 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
     streamed_draw_count = 0
     stream_flush_every = 32
 
-    for instr in instructions:
+    if not dry:
+        motion_failed = not await run_serial(serial_mgr.prepare_plot)
+        if motion_failed:
+            state.errors.append("Could not prepare plotter for plotting")
+            logger.error("Plot stopped: plotter preparation failed")
+
+    for instr in instructions if not motion_failed else []:
         if state.plot_state == PlotState.IDLE:
             break
 
@@ -1220,8 +1226,9 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
     # plot complete / stopped
     duration = time.time() - plot_start
     state.update(plot_state=PlotState.IDLE)
-    serial_mgr.pen_up()
-    serial_mgr.walk_home()
+    if not dry and not motion_failed:
+        serial_mgr.pen_up()
+        serial_mgr.walk_home()
 
     if not dry and not motion_failed:
         history.log_plot(

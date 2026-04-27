@@ -231,6 +231,12 @@ class SerialManager:
         self._exchange(cmd, read_timeout=2.0, multiline_ok=True)
         self._last_pen_servo_pos = target_pos
 
+    def _s2_pen_height(self, target_pos: int, rate: int = 1000, delay_ms: int = 1000) -> None:
+        """Saxi pre-plot style pen positioning."""
+        cmd = f"S2,{target_pos},4,{int(rate)},{int(delay_ms)}"
+        self._exchange(cmd, read_timeout=max(2.0, delay_ms / 1000.0 + 1.0), multiline_ok=True)
+        self._last_pen_servo_pos = target_pos
+
     # ---- connection ----
 
     def connect(self, port: str) -> bool:
@@ -772,6 +778,32 @@ class SerialManager:
         with self._serial_lock:
             self._exchange(cmd[5:].strip(), read_timeout=2.0)
 
+    def prepare_plot(self) -> bool:
+        """Match Saxi's prePlot: enable motors at 16x and park the pen up."""
+        if self._ser is None or not self._ser.is_open:
+            return False
+        self._emergency_stop = False
+        with self._pause_lock:
+            self._paused = False
+        profile = self._active_profile()
+        with self._overrides_lock:
+            o = dict(self.live_overrides)
+        pen_up_pct = float(o.get("pen_pos_up", profile.get("pen_pos_up", 60)))
+        pen_up_pos = self.pen_pct_to_pos(pen_up_pct)
+        try:
+            with self._serial_lock:
+                self._exchange("EM,1,1", read_timeout=2.0)
+                if self._ebb_sr_capable:
+                    self._exchange("SR,0,1", read_timeout=2.0)
+                self._s2_pen_height(pen_up_pos, rate=1000, delay_ms=1000)
+            self.state.update(pen_is_down=False)
+            return True
+        except Exception as e:
+            logger.warning("Plot preparation failed: %s", e)
+            if self.on_error:
+                self.on_error(str(e))
+            return False
+
     def _next_seq(self) -> int:
         with self._seq_lock:
             self._seq_counter += 1
@@ -838,7 +870,7 @@ class SerialManager:
                     elif cmd.startswith("_raw:"):
                         self._execute_raw_ebb(cmd)
                         if sc.callback:
-                            sc.callback("")
+                            sc.callback("ok")
                     else:
                         if sc.callback:
                             sc.callback("")
@@ -949,6 +981,8 @@ class SerialManager:
 
     def enable_motors(self):
         self._emergency_stop = False
+        with self._pause_lock:
+            self._paused = False
         self.enqueue("_raw:EM,1,1", Priority.MANUAL)
         if self._ebb_sr_capable:
             self.enqueue("_raw:SR,0,1", Priority.MANUAL)
@@ -964,9 +998,16 @@ class SerialManager:
         self._commanded_y = 0.0
 
     def walk_home(self):
+        self._emergency_stop = False
+        with self._pause_lock:
+            self._paused = False
+        self.enable_motors()
         self._move_to(0.0, 0.0, travel=True, priority=Priority.MANUAL)
 
     def jog(self, dx_mm: float, dy_mm: float) -> Optional[str]:
+        self._emergency_stop = False
+        with self._pause_lock:
+            self._paused = False
         if getattr(self, "is_connected", False) or not self.state.connected:
             if not self.state.connected:
                 return "Not connected"
