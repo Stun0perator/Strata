@@ -772,8 +772,8 @@ class SerialManager:
 
     def _execute_raw_ebb(self, cmd: str):
         payload = cmd[5:].strip().upper()
-        if not (payload.startswith("EM") or payload.startswith("SR")):
-            logger.warning("Ignoring raw (not EM/SR): %s", cmd)
+        if not (payload.startswith("EM") or payload.startswith("SR") or payload.startswith("HM")):
+            logger.warning("Ignoring raw (not EM/SR/HM): %s", cmd)
             return
         with self._serial_lock:
             self._exchange(cmd[5:].strip(), read_timeout=2.0)
@@ -1002,7 +1002,13 @@ class SerialManager:
         with self._pause_lock:
             self._paused = False
         self.enable_motors()
-        self._move_to(0.0, 0.0, travel=True, priority=Priority.MANUAL)
+        def _cb(resp):
+            if resp == "ok":
+                self.state.update(current_x=0.0, current_y=0.0)
+                self._commanded_x = 0.0
+                self._commanded_y = 0.0
+
+        self.enqueue("_raw:HM,4000", Priority.MANUAL, callback=_cb, tag="home")
 
     def jog(self, dx_mm: float, dy_mm: float) -> Optional[str]:
         self._emergency_stop = False
@@ -1132,27 +1138,28 @@ class SerialManager:
                     self.on_error(err)
                 return False
 
-        profile = self._active_profile()
-        with self._overrides_lock:
-            o = dict(self.live_overrides)
         speed = self._speed_mm_s_for_tag("draw")
 
-        accel = self._accel_mm_s2()
-        blocks = self._plan_path_blocks(clean_points, accel=accel, max_vel=speed)
-        if not blocks:
-            return True
-
         distance = 0.0
-        for idx in range(1, len(clean_points)):
-            distance += math.hypot(clean_points[idx][0] - clean_points[idx - 1][0], clean_points[idx][1] - clean_points[idx - 1][1])
-
-        for idx, block in enumerate(blocks):
+        current_x, current_y = clean_points[0]
+        self._step_error_x = 0.0
+        self._step_error_y = 0.0
+        for idx, (x, y) in enumerate(clean_points[1:], start=1):
             if not self._wait_while_paused_or_stopped():
                 return False
-            if not self._execute_lm_block(block):
+            dx = x - current_x
+            dy = y - current_y
+            seg_dist = math.hypot(dx, dy)
+            if seg_dist < 0.001:
+                current_x, current_y = x, y
+                continue
+            if not self._xm_move(dx, dy, speed):
                 return False
-            if idx % 16 == 15 and self._emergency_stop:
+            distance += seg_dist
+            current_x, current_y = x, y
+            if idx % 32 == 0 and self._emergency_stop:
                 return False
+
         if not self._wait_motion_complete():
             return False
 
