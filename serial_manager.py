@@ -41,6 +41,18 @@ _LM_RATE_SCALE = 0x80000000 / 25000.0
 PLANNER_EPSILON = 1e-9
 SAXI_CORNER_FACTOR_MM = 0.127
 
+# Saxi exact defaults (planning.ts defaultPlanOptions + massager.ts replan)
+SAXI_DRAW_ACCEL_MM_S2 = 200.0
+SAXI_TRAVEL_ACCEL_MM_S2 = 400.0
+SAXI_DRAW_CORNER_FACTOR_MM = 0.127
+SAXI_TRAVEL_CORNER_FACTOR_MM = 0.0
+
+# Douglas-Peucker tolerance for path simplification before planning.
+# SVG paths sampled at 0.5 mm create thousands of near-collinear points;
+# each becomes a planner segment with near-zero corner velocity, causing
+# constant accel/decel (the "buzzy" symptom).  We fix it by simplifying here.
+PATH_SIMPLIFY_TOLERANCE_MM = 0.02
+
 DEFAULT_PEN_MOTION_MS = 120
 
 PEN_SERVO_MIN = 7500   # pen down (100% "down" in saxi)
@@ -343,12 +355,20 @@ class SerialManager:
     def _speed_value_mm_s(self, value: float, max_speed: float) -> float:
         return max(1.0, min(float(value), max_speed))
 
-    def _accel_mm_s2(self) -> float:
+    def _accel_pct(self) -> float:
+        """Return the accel slider value as a fraction (0..1+). Default 100%."""
         profile = self._active_profile()
         with self._overrides_lock:
             o = dict(self.live_overrides)
-        pct = float(o.get("accel", profile.get("accel", 75)))
-        return max(20.0, (pct / 100.0) * 400.0)
+        return max(0.05, float(o.get("accel", profile.get("accel", 100))) / 100.0)
+
+    def _draw_accel_mm_s2(self) -> float:
+        """Saxi penDownAcceleration default 200 mm/s², scaled by user slider."""
+        return max(20.0, self._accel_pct() * SAXI_DRAW_ACCEL_MM_S2)
+
+    def _travel_accel_mm_s2(self) -> float:
+        """Saxi penUpAcceleration default 400 mm/s², scaled by user slider."""
+        return max(20.0, self._accel_pct() * SAXI_TRAVEL_ACCEL_MM_S2)
 
     def _speed_mm_s_for_tag(self, tag: str, swirl_sp: Optional[float] = None) -> float:
         profile = self._active_profile()
@@ -357,27 +377,14 @@ class SerialManager:
         if swirl_sp is not None:
             return self._speed_value_mm_s(float(swirl_sp), MAX_DRAW_SPEED_MM_S)
         if tag in ("draw", "swirl"):
-            speed = float(o.get("speed_pendown", profile.get("speed_pendown", 25)))
+            speed = float(o.get("speed_pendown", profile.get("speed_pendown", 50)))
             return self._speed_value_mm_s(speed, MAX_DRAW_SPEED_MM_S)
         else:
-            speed = float(o.get("speed_penup", profile.get("speed_penup", 75)))
+            speed = float(o.get("speed_penup", profile.get("speed_penup", 200)))
             return self._speed_value_mm_s(speed, MAX_TRAVEL_SPEED_MM_S)
 
-    def _move_time_trapezoid_s(self, distance_mm: float) -> float:
-        if distance_mm <= 1e-9:
-            return 0.0
-        v_max = min(MAX_SPEED_MM_S, 200.0)
-        a = MAX_ACCEL_MM_S2
-        t_acc = v_max / a
-        d_acc = 0.5 * a * t_acc * t_acc
-        if 2.0 * d_acc >= distance_mm:
-            return 2.0 * math.sqrt(distance_mm / a)
-        return 2.0 * t_acc + (distance_mm - 2.0 * d_acc) / v_max
-
     def _lm_axis_rates(self, steps: int, initial_steps_per_sec: float, final_steps_per_sec: float) -> Tuple[int, int]:
-        """
-        Saxi-style LM: initialRate, deltaR per axis.
-        """
+        """Saxi-style LM axis rate computation (ebb.ts axisRate)."""
         if steps == 0:
             return 0, 0
         initial_rate = round(initial_steps_per_sec * _LM_RATE_SCALE)
@@ -388,57 +395,52 @@ class SerialManager:
         delta_r = round((final_rate - initial_rate) / (move_time * 25000.0))
         return int(initial_rate), int(delta_r)
 
-    def _try_lm_move(self, dx_mm: float, dy_mm: float, speed_mm_s: float) -> bool:
-        if not self._ebb_lm_capable:
-            return False
-        
-        x_steps, y_steps = self._microsteps_xy(dx_mm, dy_mm)
-        if x_steps == 0 and y_steps == 0:
-            return True
+    # ---- path simplification (Douglas-Peucker) ----
 
-        distance_mm = math.hypot(dx_mm, dy_mm)
-        move_time_s = self._move_time_trapezoid_s(distance_mm)
-        if move_time_s <= 0:
-            move_time_s = max(1e-3, distance_mm / max(1.0, speed_mm_s))
+    @staticmethod
+    def _perpendicular_distance(pt, line_start, line_end):
+        dx = line_end[0] - line_start[0]
+        dy = line_end[1] - line_start[1]
+        mag_sq = dx * dx + dy * dy
+        if mag_sq < 1e-18:
+            return math.hypot(pt[0] - line_start[0], pt[1] - line_start[1])
+        t = max(0.0, min(1.0, ((pt[0] - line_start[0]) * dx + (pt[1] - line_start[1]) * dy) / mag_sq))
+        proj_x = line_start[0] + t * dx
+        proj_y = line_start[1] + t * dy
+        return math.hypot(pt[0] - proj_x, pt[1] - proj_y)
 
-        initial_rate = 0.0
-        final_rate = (2.0 * distance_mm / move_time_s) * MICROSTEPS_PER_MM
+    @staticmethod
+    def _simplify_path(points, tolerance=PATH_SIMPLIFY_TOLERANCE_MM):
+        """Ramer-Douglas-Peucker to remove near-collinear points.
 
-        norm = math.hypot(x_steps, y_steps)
-        if norm == 0:
-            return True
-        norm_x = x_steps / norm
-        norm_y = y_steps / norm
-        
-        initial_rate_x = initial_rate * norm_x
-        initial_rate_y = initial_rate * norm_y
-        final_rate_x = final_rate * norm_x
-        final_rate_y = final_rate * norm_y
-        
-        initial_rate_axis1 = abs(initial_rate_x + initial_rate_y)
-        initial_rate_axis2 = abs(initial_rate_x - initial_rate_y)
-        final_rate_axis1 = abs(final_rate_x + final_rate_y)
-        final_rate_axis2 = abs(final_rate_x - final_rate_y)
-        
-        steps_axis1 = x_steps + y_steps
-        steps_axis2 = x_steps - y_steps
-        
-        ir1, dr1 = self._lm_axis_rates(steps_axis1, initial_rate_axis1, final_rate_axis1)
-        ir2, dr2 = self._lm_axis_rates(steps_axis2, initial_rate_axis2, final_rate_axis2)
-
-        lm = f"LM,{ir1},{steps_axis1},{dr1},{ir2},{steps_axis2},{dr2}"
-        with self._serial_lock:
-            resp = self._exchange(lm, read_timeout=2.0)
-        rlow = resp.lower()
-        if "!" in resp or "err" in rlow:
-            logger.warning("LM rejected: %r — XM fallback", resp)
-            return False
-        if "ok" in rlow:
-            return True
-        if not resp.strip():
-            return True
-        logger.warning("LM unclear response %r — XM fallback", resp)
-        return False
+        SVG paths sampled at 0.5 mm produce hundreds of collinear points per
+        straight segment.  Each becomes a planner segment with a near-zero
+        corner velocity, so the motors accel/decel constantly = buzz.
+        This reduces a 200-point line to 2 points while preserving curves.
+        """
+        if len(points) <= 2:
+            return list(points)
+        keep = [False] * len(points)
+        keep[0] = keep[-1] = True
+        stack = [(0, len(points) - 1)]
+        while stack:
+            start_idx, end_idx = stack.pop()
+            max_dist = 0.0
+            farthest = start_idx
+            sp = points[start_idx]
+            ep = points[end_idx]
+            for i in range(start_idx + 1, end_idx):
+                d = SerialManager._perpendicular_distance(points[i], sp, ep)
+                if d > max_dist:
+                    max_dist = d
+                    farthest = i
+            if max_dist > tolerance:
+                keep[farthest] = True
+                if farthest - start_idx > 1:
+                    stack.append((start_idx, farthest))
+                if end_idx - farthest > 1:
+                    stack.append((farthest, end_idx))
+        return [p for i, p in enumerate(points) if keep[i]]
 
     @staticmethod
     def _vsub(a: tuple[float, float], b: tuple[float, float]) -> tuple[float, float]:
@@ -657,13 +659,35 @@ class SerialManager:
                 return True
             time.sleep(0.05)
 
-    def _move_with_planner(self, dx_mm: float, dy_mm: float, speed_mm_s: float, wait: bool = True) -> bool:
+    def _move_with_planner(self, dx_mm: float, dy_mm: float, speed_mm_s: float,
+                           wait: bool = True, is_draw: bool = False) -> bool:
+        """Plan and execute a move using Saxi's accel profile."""
         if abs(dx_mm) < 1e-9 and abs(dy_mm) < 1e-9:
             return True
-        used_lm = self._try_lm_move(dx_mm, dy_mm, speed_mm_s) if wait else False
-        if not used_lm:
-            if not self._xm_move(dx_mm, dy_mm, speed_mm_s):
-                return False
+        if is_draw:
+            accel = self._draw_accel_mm_s2()
+            cfactor = SAXI_DRAW_CORNER_FACTOR_MM
+        else:
+            accel = self._travel_accel_mm_s2()
+            cfactor = SAXI_TRAVEL_CORNER_FACTOR_MM
+        if self._ebb_lm_capable and wait:
+            blocks = self._plan_path_blocks(
+                [(0.0, 0.0), (dx_mm, dy_mm)],
+                accel=accel, max_vel=speed_mm_s, corner_factor=cfactor,
+            )
+            if blocks:
+                saved_ex, saved_ey = self._step_error_x, self._step_error_y
+                self._step_error_x = 0.0
+                self._step_error_y = 0.0
+                for blk in blocks:
+                    if not self._execute_lm_block(blk):
+                        self._step_error_x = saved_ex
+                        self._step_error_y = saved_ey
+                        break
+                else:
+                    return self._wait_motion_complete()
+        if not self._xm_move(dx_mm, dy_mm, speed_mm_s):
+            return False
         if not wait:
             return True
         return self._wait_motion_complete()
@@ -1002,7 +1026,28 @@ class SerialManager:
         with self._pause_lock:
             self._paused = False
         self.enable_motors()
-        self._move_to(0.0, 0.0, travel=True, priority=Priority.MANUAL)
+        cx = float(self.state.current_x)
+        cy = float(self.state.current_y)
+        if abs(cx) < 0.001 and abs(cy) < 0.001:
+            self.state.update(current_x=0.0, current_y=0.0)
+            self._commanded_x = 0.0
+            self._commanded_y = 0.0
+            return
+        self._commanded_x = 0.0
+        self._commanded_y = 0.0
+        self._step_error_x = 0.0
+        self._step_error_y = 0.0
+
+        def _home_cb(resp):
+            if resp == "ok":
+                self.state.update(current_x=0.0, current_y=0.0)
+
+        self.enqueue(
+            f"_py:go,{-cx:.6f},{-cy:.6f}",
+            Priority.MANUAL,
+            callback=_home_cb,
+            tag="travel",
+        )
 
     def jog(self, dx_mm: float, dy_mm: float) -> Optional[str]:
         self._emergency_stop = False
@@ -1132,32 +1177,68 @@ class SerialManager:
                     self.on_error(err)
                 return False
 
+        # Key fix: simplify path before planning (Douglas-Peucker).
+        # SVG paths sampled at 0.5 mm create thousands of near-collinear
+        # points that cause constant accel/decel = buzz.
+        clean_points = self._simplify_path(clean_points, PATH_SIMPLIFY_TOLERANCE_MM)
+        if len(clean_points) < 2:
+            return True
+
         speed = self._speed_mm_s_for_tag("draw")
-        accel = self._accel_mm_s2()
-        blocks = self._plan_path_blocks(clean_points, accel=accel, max_vel=speed)
+        accel = self._draw_accel_mm_s2()
+        blocks = self._plan_path_blocks(
+            clean_points, accel=accel, max_vel=speed,
+            corner_factor=SAXI_DRAW_CORNER_FACTOR_MM,
+        )
         if not blocks:
             return True
 
         distance = 0.0
         for idx in range(1, len(clean_points)):
-            distance += math.hypot(clean_points[idx][0] - clean_points[idx - 1][0], clean_points[idx][1] - clean_points[idx - 1][1])
+            distance += math.hypot(
+                clean_points[idx][0] - clean_points[idx - 1][0],
+                clean_points[idx][1] - clean_points[idx - 1][1],
+            )
 
         self._step_error_x = 0.0
         self._step_error_y = 0.0
+        fifo_check_interval = 8
         for idx, block in enumerate(blocks):
             if not self._wait_while_paused_or_stopped():
                 return False
             if not self._execute_lm_block(block):
                 return False
-            if idx % 16 == 15 and self._emergency_stop:
+            if self._emergency_stop:
                 return False
+            if idx % fifo_check_interval == (fifo_check_interval - 1) and idx < len(blocks) - 1:
+                self._wait_for_fifo_space()
         if not self._wait_motion_complete():
             return False
 
         end_x, end_y = clean_points[-1]
         self.state.update(current_x=end_x, current_y=end_y)
+        self._commanded_x = end_x
+        self._commanded_y = end_y
         self.state.add_distance(distance)
         return True
+
+    def _wait_for_fifo_space(self, max_fifo: int = 3) -> None:
+        """Wait until the EBB FIFO has space."""
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            if self._emergency_stop:
+                return
+            with self._serial_lock:
+                r = self._exchange("QM", read_timeout=0.5)
+            parts = [p.strip() for p in r.replace("\n", "").split(",")]
+            if len(parts) >= 5:
+                try:
+                    fifo_count = int(parts[4])
+                    if fifo_count <= max_fifo:
+                        return
+                except (ValueError, IndexError):
+                    return
+            time.sleep(0.01)
 
     def _check_soft_limits(self, x: float, y: float) -> Optional[str]:
         try:
