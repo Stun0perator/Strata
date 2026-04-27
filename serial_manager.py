@@ -864,6 +864,9 @@ class SerialManager:
                 if self._ser is None or not self._ser.is_open:
                     time.sleep(0.1)
                     continue
+                if self.state.plot_state in (PlotState.PLOTTING, PlotState.PAUSED, PlotState.DIPPING):
+                    time.sleep(0.1)
+                    continue
                 with self._serial_lock:
                     self._write_line("QB")
                     text = self._read_response_until_ok(timeout=0.35)
