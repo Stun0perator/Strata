@@ -586,6 +586,126 @@ async def use_optimized(request: Request):
     return {"ok": True, "preview": svg_proc.current.to_preview_json() if svg_proc.current else None}
 
 
+def _svg_tool_response(result: dict) -> dict:
+    return {
+        "ok": True,
+        "result": result,
+        "preview": svg_proc.current.to_preview_json() if svg_proc.current else None,
+    }
+
+
+@app.get("/api/svg/sanity")
+async def svg_sanity():
+    if not svg_proc.has_svg:
+        return JSONResponse({"error": "No SVG loaded"}, 400)
+    return {"ok": True, "result": svg_proc.sanity_check()}
+
+
+@app.post("/api/svg/layer_optimizer")
+async def svg_layer_optimizer():
+    if not svg_proc.has_svg:
+        return JSONResponse({"error": "No SVG loaded"}, 400)
+    try:
+        return _svg_tool_response(svg_proc.optimize_layers_by_pen())
+    except Exception as e:
+        logger.exception("Layer optimizer error")
+        return JSONResponse({"error": str(e)}, 500)
+
+
+@app.post("/api/svg/registration_marks")
+async def svg_registration_marks(request: Request):
+    if not svg_proc.has_svg:
+        return JSONResponse({"error": "No SVG loaded"}, 400)
+    body = await request.json()
+    try:
+        result = svg_proc.add_registration_marks(
+            size_mm=float(body.get("size_mm", 5.0)),
+            inset_mm=float(body.get("inset_mm", 8.0)),
+        )
+        return _svg_tool_response(result)
+    except Exception as e:
+        logger.exception("Registration mark error")
+        return JSONResponse({"error": str(e)}, 500)
+
+
+@app.post("/api/svg/pen_weight")
+async def svg_pen_weight(request: Request):
+    if not svg_proc.has_svg:
+        return JSONResponse({"error": "No SVG loaded"}, 400)
+    body = await request.json()
+    try:
+        result = svg_proc.add_pen_weight(
+            spacing_mm=float(body.get("spacing_mm", 0.35)),
+            passes=int(body.get("passes", 3)),
+        )
+        return _svg_tool_response(result)
+    except Exception as e:
+        logger.exception("Pen weight error")
+        return JSONResponse({"error": str(e)}, 500)
+
+
+@app.post("/api/svg/hatch_fill")
+async def svg_hatch_fill(request: Request):
+    if not svg_proc.has_svg:
+        return JSONResponse({"error": "No SVG loaded"}, 400)
+    body = await request.json()
+    try:
+        result = svg_proc.add_hatch_fill(
+            style=body.get("style", "straight"),
+            spacing_mm=float(body.get("spacing_mm", 3.0)),
+            angle_deg=float(body.get("angle_deg", 45.0)),
+            target_layer=body.get("target_layer") or None,
+        )
+        return _svg_tool_response(result)
+    except Exception as e:
+        logger.exception("Hatch fill error")
+        return JSONResponse({"error": str(e)}, 500)
+
+
+@app.post("/api/svg/masked_fill")
+async def svg_masked_fill(request: Request):
+    if not svg_proc.has_svg:
+        return JSONResponse({"error": "No SVG loaded"}, 400)
+    body = await request.json()
+    try:
+        result = svg_proc.add_masked_fill(
+            region_type=body.get("region_type"),
+            region_params=body.get("region_params"),
+            fill_style=body.get("fill_style", "waves"),
+            spacing_mm=float(body.get("spacing_mm", 3.0)),
+        )
+        return _svg_tool_response(result)
+    except Exception as e:
+        logger.exception("Masked fill error")
+        return JSONResponse({"error": str(e)}, 500)
+
+
+@app.post("/api/svg/maze_fill")
+async def svg_maze_fill(request: Request):
+    if not svg_proc.has_svg:
+        return JSONResponse({"error": "No SVG loaded"}, 400)
+    body = await request.json()
+    try:
+        result = svg_proc.add_maze_fill(spacing_mm=float(body.get("spacing_mm", 4.0)))
+        return _svg_tool_response(result)
+    except Exception as e:
+        logger.exception("Maze fill error")
+        return JSONResponse({"error": str(e)}, 500)
+
+
+@app.post("/api/svg/style_preset")
+async def svg_style_preset(request: Request):
+    if not svg_proc.has_svg:
+        return JSONResponse({"error": "No SVG loaded"}, 400)
+    body = await request.json()
+    try:
+        result = svg_proc.apply_style_preset(body.get("preset", "engraving"))
+        return _svg_tool_response(result)
+    except Exception as e:
+        logger.exception("Style preset error")
+        return JSONResponse({"error": str(e)}, 500)
+
+
 @app.post("/api/svg/undo")
 async def svg_undo():
     if svg_proc.undo():

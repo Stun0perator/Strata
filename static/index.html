@@ -569,16 +569,54 @@ label { font-size:0.8rem; color:var(--text-muted); }
 
       <div id="home-vpype-wrap" style="display:flex; gap:10px;">
         <div class="card" id="vpype-card" style="display:block;margin-bottom:0;flex:1">
-            <h3>vpype Optimization</h3>
+            <h3>Plotter Tools</h3>
+            <div class="btn-row" style="margin-bottom:5px">
+              <button class="primary" onclick="runSanityCheck()" style="font-size:0.72rem;padding:3px 8px">Sanity Check</button>
+              <button onclick="applyCleanupPreset()" style="font-size:0.72rem;padding:3px 8px">Cleanup Preset</button>
+              <button onclick="optimizeLayersByPen()" style="font-size:0.72rem;padding:3px 8px">Layer by Pen</button>
+              <button onclick="addRegistrationMarks()" style="font-size:0.72rem;padding:3px 8px">Reg Marks</button>
+            </div>
             <div class="vpype-op"><input type="checkbox" id="vp-linemerge" checked><span class="op-name">linemerge</span>
               <label>tol</label><input type="number" id="vp-linemerge-tol" value="0.5" min="0.1" step="0.1"> mm</div>
+            <div class="vpype-op"><input type="checkbox" id="vp-deduplicate" checked><span class="op-name">deduplicate</span>
+              <label>tol</label><input type="number" id="vp-dedup-tol" value="0.1" min="0.01" step="0.01"> mm</div>
             <div class="vpype-op"><input type="checkbox" id="vp-linesort" checked><span class="op-name">linesort</span></div>
+            <div class="vpype-op"><input type="checkbox" id="vp-reloop"><span class="op-name">reloop</span></div>
             <div class="vpype-op"><input type="checkbox" id="vp-filter"><span class="op-name">filter</span>
               <label>min</label><input type="number" id="vp-filter-len" value="1.0" min="0.1" step="0.1"> mm</div>
             <div class="vpype-op"><input type="checkbox" id="vp-splitall"><span class="op-name">splitall</span></div>
             <div class="vpype-op"><input type="checkbox" id="vp-scaleto"><span class="op-name">scaleto</span></div>
+            <div class="vpype-op"><input type="checkbox" id="vp-occult"><span class="op-name">occult</span>
+              <label><input type="checkbox" id="vp-occult-keep"> ghost</label>
+              <label><input type="checkbox" id="vp-occult-ignore"> ignore layers</label></div>
+            <div class="vpype-op"><input type="checkbox" id="vp-perspective"><span class="op-name">perspective</span>
+              <label>pan</label><input type="number" id="vp-persp-pan" value="0" step="1">
+              <label>tilt</label><input type="number" id="vp-persp-tilt" value="0" step="1">
+              <label>fov</label><input type="number" id="vp-persp-fov" value="60" min="10" max="140" step="1"></div>
+            <div class="vpype-op"><span class="op-name">Hatch</span>
+              <select id="tool-hatch-style">
+                <option value="straight">straight</option><option value="contour">contour</option>
+                <option value="circular">circular</option><option value="chaotic">chaotic</option>
+              </select>
+              <label>gap</label><input type="number" id="tool-hatch-spacing" value="3" min="0.5" step="0.5">
+              <button onclick="addHatchFill()" style="font-size:0.68rem;padding:2px 7px">Add Hatch</button></div>
+            <div class="vpype-op"><span class="op-name">Style</span>
+              <select id="tool-style-preset">
+                <option>woodcut</option><option>engraving</option><option>topo map</option><option>stipple</option>
+                <option>contour lines</option><option>flow field</option><option>comic ink</option><option>blueprint</option>
+              </select>
+              <button onclick="applyStylePreset()" style="font-size:0.68rem;padding:2px 7px">Apply</button></div>
+            <div class="vpype-op"><span class="op-name">Pen Weight</span>
+              <label>gap</label><input type="number" id="tool-weight-spacing" value="0.35" min="0.05" step="0.05">
+              <label>passes</label><input type="number" id="tool-weight-passes" value="3" min="1" max="8" step="1">
+              <button onclick="addPenWeight()" style="font-size:0.68rem;padding:2px 7px">Generate</button></div>
+            <div class="vpype-op"><span class="op-name">Masked Fill</span>
+              <select id="tool-masked-style"><option>waves</option><option>maze</option><option>spiral</option></select>
+              <button onclick="addMaskedFill()" style="font-size:0.68rem;padding:2px 7px">Fill Selection</button>
+              <button onclick="addMazeFill()" style="font-size:0.68rem;padding:2px 7px">Maze Fill</button></div>
             <div class="btn-row" style="margin-top:4px">
               <button class="primary" onclick="runVpype()" style="font-size:0.72rem;padding:3px 8px">Run vpype</button>
+              <button onclick="previewOccultToggle()" style="font-size:0.72rem;padding:3px 8px">Occult Preview</button>
               <label style="display:flex;align-items:center;gap:3px;font-size:0.68rem">
                 <input type="checkbox" id="use-optimized" onchange="toggleOptimized()"> Use optimized</label>
             </div>
@@ -1706,12 +1744,19 @@ async function svgUndo() {
 // ===== vpype =====
 async function runVpype() {
   const ops = [];
+  if (document.getElementById('vp-splitall').checked) ops.push({name:'splitall'});
+  if (document.getElementById('vp-deduplicate').checked)
+    ops.push({name:'deduplicate', tolerance:+document.getElementById('vp-dedup-tol').value});
   if (document.getElementById('vp-linemerge').checked)
     ops.push({name:'linemerge', tolerance:+document.getElementById('vp-linemerge-tol').value});
+  if (document.getElementById('vp-reloop').checked) ops.push({name:'reloop'});
+  if (document.getElementById('vp-occult').checked)
+    ops.push({name:'occult', keep:document.getElementById('vp-occult-keep').checked, ignore_layers:document.getElementById('vp-occult-ignore').checked});
+  if (document.getElementById('vp-perspective').checked)
+    ops.push({name:'perspective', pan:+document.getElementById('vp-persp-pan').value, tilt:+document.getElementById('vp-persp-tilt').value, hfov:+document.getElementById('vp-persp-fov').value});
   if (document.getElementById('vp-linesort').checked) ops.push({name:'linesort'});
   if (document.getElementById('vp-filter').checked)
     ops.push({name:'filter', min_length:+document.getElementById('vp-filter-len').value});
-  if (document.getElementById('vp-splitall').checked) ops.push({name:'splitall'});
   if (document.getElementById('vp-scaleto').checked) {
     const m = MODEL_DIMS[+document.getElementById('s-model').value] || {w:300,h:218};
     ops.push({name:'scaleto', width:m.w, height:m.h});
@@ -1728,6 +1773,99 @@ async function runVpype() {
       `Before: ${s.before.paths}p / ${s.before.distance_mm}mm → After: ${s.after.paths}p / ${s.after.distance_mm}mm`;
     toast('vpype complete','success');
   }
+}
+
+function refreshToolPreview(d) {
+  if (!d || !d.preview) return false;
+  previewData = d.preview;
+  showSvgPreview(d.preview);
+  renderLayersPanel(d.preview.layers);
+  return true;
+}
+
+function writeToolStats(text) {
+  const el = document.getElementById('vpype-stats');
+  if (el) el.textContent = text;
+}
+
+async function runSanityCheck() {
+  const d = await apiGet('/api/svg/sanity');
+  if (!d || !d.result) return;
+  const r = d.result;
+  const issues = r.issues || [];
+  writeToolStats(`${r.status === 'safe_to_plot' ? 'Safe to plot' : 'Fix needed'}: ${issues.map(i => i.message).slice(0, 3).join(' | ') || 'No issues found'}`);
+  toast(r.status === 'safe_to_plot' ? 'Sanity check passed' : 'Sanity check found issues', r.status === 'safe_to_plot' ? 'success' : 'info');
+}
+
+async function applyCleanupPreset() {
+  document.getElementById('vp-splitall').checked = false;
+  document.getElementById('vp-deduplicate').checked = true;
+  document.getElementById('vp-linemerge').checked = true;
+  document.getElementById('vp-reloop').checked = true;
+  document.getElementById('vp-linesort').checked = true;
+  document.getElementById('vp-filter').checked = true;
+  await runVpype();
+}
+
+async function previewOccultToggle() {
+  document.getElementById('vp-occult').checked = true;
+  document.getElementById('vp-occult-keep').checked = true;
+  await runVpype();
+}
+
+async function optimizeLayersByPen() {
+  const d = await api('/api/svg/layer_optimizer', {});
+  if (refreshToolPreview(d)) {
+    const warnings = d.result?.warnings || [];
+    writeToolStats(`Layer by pen: ${(d.result?.layers || []).length} layers${warnings.length ? ' | ' + warnings.join(' | ') : ''}`);
+    toast('Layers sorted by pen/color','success');
+  }
+}
+
+async function addRegistrationMarks() {
+  const d = await api('/api/svg/registration_marks', {size_mm:5, inset_mm:8});
+  if (refreshToolPreview(d)) toast('Registration marks added','success');
+}
+
+async function addPenWeight() {
+  const d = await api('/api/svg/pen_weight', {
+    spacing_mm:+document.getElementById('tool-weight-spacing').value,
+    passes:+document.getElementById('tool-weight-passes').value,
+  });
+  if (refreshToolPreview(d)) toast('Pen weight layer generated','success');
+}
+
+async function addHatchFill() {
+  const d = await api('/api/svg/hatch_fill', {
+    style:document.getElementById('tool-hatch-style').value,
+    spacing_mm:+document.getElementById('tool-hatch-spacing').value,
+    angle_deg:45,
+    target_layer:activeLayerName,
+  });
+  if (refreshToolPreview(d)) toast('Hatch layer added','success');
+}
+
+async function applyStylePreset() {
+  const preset = document.getElementById('tool-style-preset').value;
+  const d = await api('/api/svg/style_preset', {preset});
+  if (refreshToolPreview(d)) toast(`${preset} style added`,'success');
+}
+
+async function addMaskedFill() {
+  if (!selRegion) { toast('Draw a selection first','error'); return; }
+  if (!(await commitPendingPreviewTransform())) return;
+  const d = await api('/api/svg/masked_fill', {
+    region_type:selRegion.type,
+    region_params:selRegion.params,
+    fill_style:document.getElementById('tool-masked-style').value,
+    spacing_mm:+document.getElementById('tool-hatch-spacing').value,
+  });
+  if (refreshToolPreview(d)) toast('Masked fill added','success');
+}
+
+async function addMazeFill() {
+  const d = await api('/api/svg/maze_fill', {spacing_mm:+document.getElementById('tool-hatch-spacing').value});
+  if (refreshToolPreview(d)) toast('Maze fill layer added','success');
 }
 async function toggleOptimized() {
   const use = document.getElementById('use-optimized').checked;

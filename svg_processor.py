@@ -479,6 +479,41 @@ class SVGProcessor:
                 cmd += ["filter", "--min-length", f"{min_len}mm"]
             elif name == "splitall":
                 cmd += ["splitall"]
+            elif name == "deduplicate":
+                tol = op.get("tolerance", 0.1)
+                cmd += ["deduplicate", "--tolerance", str(tol)]
+            elif name == "reloop":
+                cmd += ["reloop"]
+            elif name == "occult":
+                occult_cmd = ["occult"]
+                if op.get("keep"):
+                    occult_cmd.append("-k")
+                if op.get("ignore_layers"):
+                    occult_cmd.append("-i")
+                if op.get("across_layers"):
+                    occult_cmd.append("-a")
+                cmd += occult_cmd
+            elif name == "perspective":
+                spread = op.get("spread")
+                if spread:
+                    cmd += ["pspread", f"{float(spread)}mm"]
+                rotate_axis = op.get("rotate_axis")
+                rotate_deg = op.get("rotate_deg")
+                if rotate_axis and rotate_deg not in (None, ""):
+                    cmd += ["protate", str(rotate_axis), str(float(rotate_deg))]
+                scale_x = op.get("scale_x")
+                scale_y = op.get("scale_y")
+                if scale_x not in (None, "") or scale_y not in (None, ""):
+                    cmd += ["pscale", str(float(scale_x or 1.0)), str(float(scale_y or 1.0)), "1"]
+                pan = float(op.get("pan", 0) or 0)
+                tilt = float(op.get("tilt", 0) or 0)
+                hfov = float(op.get("hfov", 60) or 60)
+                persp_cmd = ["perspective", "--hfov", str(hfov)]
+                if abs(pan) > 1e-9:
+                    persp_cmd += ["--pan", str(pan)]
+                if abs(tilt) > 1e-9:
+                    persp_cmd += ["--tilt", str(tilt)]
+                cmd += persp_cmd
             elif name == "scaleto":
                 w = op.get("width")
                 h = op.get("height")
@@ -910,6 +945,262 @@ class SVGProcessor:
             for seg in layer.paths:
                 seg.points = [(px + dx, py + dy) for px, py in seg.points]
         self._recompute_bounds()
+
+    # ---- plotter-ready feature tools ----
+
+    def _new_generated_layer(self, name: str, color: str = "#000000") -> SVGLayer:
+        if not self._current:
+            raise ValueError("No SVG loaded")
+        base = name
+        existing = {layer.name for layer in self._current.layers}
+        idx = 1
+        while name in existing:
+            idx += 1
+            name = f"{base} {idx}"
+        layer = SVGLayer(
+            name=name,
+            color=color,
+            enabled=True,
+            order=max((l.order for l in self._current.layers), default=-1) + 1,
+        )
+        self._current.layers.append(layer)
+        return layer
+
+    def sanity_check(self) -> dict:
+        if not self._current:
+            return {"status": "fix_needed", "issues": [{"level": "error", "message": "No SVG loaded"}]}
+        self._recompute_bounds()
+        issues: list[dict] = []
+        tiny_paths = 0
+        open_shapes = 0
+        dense_paths = 0
+        duplicate_paths = 0
+        seen: set[tuple] = set()
+        for layer in self._current.layers:
+            if not layer.paths:
+                issues.append({"level": "warn", "message": f"Layer {layer.name} is empty"})
+            if layer.total_distance() > 15000:
+                issues.append({"level": "warn", "message": f"Layer {layer.name} is very dense ({layer.total_distance():.0f} mm)"})
+            for seg in layer.paths:
+                length = seg.length_mm()
+                if length < 0.5:
+                    tiny_paths += 1
+                if len(seg.points) > 600:
+                    dense_paths += 1
+                if len(seg.points) >= 2 and math.hypot(seg.points[0][0] - seg.points[-1][0], seg.points[0][1] - seg.points[-1][1]) > 0.2:
+                    open_shapes += 1
+                key = tuple((round(x, 2), round(y, 2)) for x, y in seg.points[:80])
+                if key in seen:
+                    duplicate_paths += 1
+                seen.add(key)
+        if tiny_paths:
+            issues.append({"level": "warn", "message": f"{tiny_paths} tiny paths under 0.5 mm"})
+        if duplicate_paths:
+            issues.append({"level": "warn", "message": f"{duplicate_paths} likely duplicate paths"})
+        if dense_paths:
+            issues.append({"level": "warn", "message": f"{dense_paths} paths have excessive nodes"})
+        if open_shapes:
+            issues.append({"level": "info", "message": f"{open_shapes} open shapes found; occult needs closed shapes to hide lines"})
+        if self._current.min_x < -0.1 or self._current.min_y < -0.1:
+            issues.append({"level": "warn", "message": "Artwork extends past the canvas origin"})
+        if self._current.max_x > self._current.width_mm + 0.1 or self._current.max_y > self._current.height_mm + 0.1:
+            issues.append({"level": "warn", "message": "Artwork extends past the canvas size"})
+        status = "safe_to_plot" if not any(i["level"] in ("error", "warn") for i in issues) else "fix_needed"
+        return {
+            "status": status,
+            "issues": issues,
+            "summary": {
+                "layers": len(self._current.layers),
+                "paths": self._current.total_paths(),
+                "distance_mm": round(self._current.total_distance(), 1),
+                "bounds": [round(self._current.min_x, 1), round(self._current.min_y, 1), round(self._current.max_x, 1), round(self._current.max_y, 1)],
+            },
+        }
+
+    def optimize_layers_by_pen(self) -> dict:
+        if not self._current:
+            raise ValueError("No SVG loaded")
+        self._push_undo()
+        grouped: dict[str, SVGLayer] = {}
+        for layer in self._current.layers:
+            for seg in layer.paths:
+                key = (seg.color or layer.color or "#000000").lower()
+                if key not in grouped:
+                    grouped[key] = SVGLayer(name=str(len(grouped) + 1), color=key, order=len(grouped))
+                grouped[key].paths.append(PathSegment(
+                    points=seg.points,
+                    layer=grouped[key].name,
+                    color=key,
+                    stroke_width=seg.stroke_width,
+                    path_id=seg.path_id,
+                ))
+        self._current.layers = list(grouped.values())
+        self._recompute_bounds()
+        warnings = []
+        for layer in self._current.layers:
+            if layer.total_distance() > 15000:
+                warnings.append(f"Layer {layer.name} ({layer.color}) is very dense")
+        return {
+            "layers": [
+                {"name": l.name, "color": l.color, "paths": l.path_count(), "distance_mm": round(l.total_distance(), 1)}
+                for l in self._current.layers
+            ],
+            "warnings": warnings,
+        }
+
+    def add_registration_marks(self, size_mm: float = 5.0, inset_mm: float = 8.0) -> dict:
+        if not self._current:
+            raise ValueError("No SVG loaded")
+        self._push_undo()
+        layer = self._new_generated_layer("Registration", "#ff0000")
+        w, h = self._current.width_mm, self._current.height_mm
+        corners = [(inset_mm, inset_mm), (w - inset_mm, inset_mm), (w - inset_mm, h - inset_mm), (inset_mm, h - inset_mm)]
+        for i, (x, y) in enumerate(corners):
+            layer.paths.append(PathSegment([(x - size_mm, y), (x + size_mm, y)], layer=layer.name, color=layer.color, path_id=f"reg_{i}_h"))
+            layer.paths.append(PathSegment([(x, y - size_mm), (x, y + size_mm)], layer=layer.name, color=layer.color, path_id=f"reg_{i}_v"))
+        self._recompute_bounds()
+        return {"marks": len(corners), "layer": layer.name}
+
+    def add_pen_weight(self, spacing_mm: float = 0.35, passes: int = 3) -> dict:
+        if not self._current:
+            raise ValueError("No SVG loaded")
+        self._push_undo()
+        layer = self._new_generated_layer("Pen Weight", "#111111")
+        count = 0
+        offsets = []
+        for i in range(1, max(1, int(passes)) + 1):
+            offsets.extend([i * spacing_mm, -i * spacing_mm])
+        for src in self._current.enabled_layers():
+            if src.name == layer.name:
+                continue
+            for seg in src.paths:
+                if len(seg.points) < 2:
+                    continue
+                line = LineString(seg.points)
+                for offset in offsets:
+                    try:
+                        geom = line.parallel_offset(abs(offset), "left" if offset > 0 else "right", join_style=2)
+                    except Exception:
+                        continue
+                    parts = [geom] if isinstance(geom, LineString) else list(getattr(geom, "geoms", []))
+                    for part in parts:
+                        pts = list(part.coords)
+                        if len(pts) >= 2:
+                            layer.paths.append(PathSegment(pts, layer=layer.name, color=layer.color, path_id=f"weight_{count}"))
+                            count += 1
+        self._recompute_bounds()
+        return {"created_paths": count, "layer": layer.name}
+
+    def add_hatch_fill(self, style: str = "straight", spacing_mm: float = 3.0, angle_deg: float = 45.0, target_layer: Optional[str] = None) -> dict:
+        if not self._current:
+            raise ValueError("No SVG loaded")
+        self._push_undo()
+        self._recompute_bounds()
+        layer = self._new_generated_layer(f"{style.title()} Hatch", "#000000")
+        region = None
+        if target_layer:
+            polys = []
+            for src in self._current.layers:
+                if src.name != target_layer:
+                    continue
+                for seg in src.paths:
+                    if len(seg.points) >= 4 and math.hypot(seg.points[0][0] - seg.points[-1][0], seg.points[0][1] - seg.points[-1][1]) < 1.0:
+                        try:
+                            poly = Polygon(seg.points)
+                            if poly.is_valid and poly.area > 0:
+                                polys.append(poly)
+                        except Exception:
+                            pass
+            if polys:
+                region = polys[0]
+                for poly in polys[1:]:
+                    region = region.union(poly)
+        min_x, min_y, max_x, max_y = self._current.min_x, self._current.min_y, self._current.max_x, self._current.max_y
+        cx, cy = (min_x + max_x) / 2.0, (min_y + max_y) / 2.0
+        diag = math.hypot(max_x - min_x, max_y - min_y) + spacing_mm * 4
+        created = 0
+        spacing = max(0.4, float(spacing_mm))
+        count = int(diag / spacing) + 2
+        angle = math.radians(float(angle_deg))
+        if style == "circular":
+            for i in range(1, count):
+                r = i * spacing
+                pts = [(cx + math.cos(t) * r, cy + math.sin(t) * r) for t in [j * math.tau / 96 for j in range(97)]]
+                created += self._append_clipped_polyline(layer, pts, region, f"hatch_{created}")
+        else:
+            if style == "contour":
+                angle = 0.0
+            for i in range(-count, count + 1):
+                off = i * spacing
+                jitter = math.sin(i * 12.9898) * spacing * 0.25 if style in ("chaotic", "woodcut", "comic ink") else 0.0
+                x1, y1 = cx - math.cos(angle) * diag - math.sin(angle) * (off + jitter), cy - math.sin(angle) * diag + math.cos(angle) * (off + jitter)
+                x2, y2 = cx + math.cos(angle) * diag - math.sin(angle) * (off - jitter), cy + math.sin(angle) * diag + math.cos(angle) * (off - jitter)
+                created += self._append_clipped_polyline(layer, [(x1, y1), (x2, y2)], region, f"hatch_{created}")
+        self._recompute_bounds()
+        return {"created_paths": created, "layer": layer.name}
+
+    def _append_clipped_polyline(self, layer: SVGLayer, pts: list[tuple[float, float]], region, path_id: str) -> int:
+        if region is None:
+            layer.paths.append(PathSegment(pts, layer=layer.name, color=layer.color, path_id=path_id))
+            return 1
+        try:
+            clipped = LineString(pts).intersection(region)
+        except Exception:
+            return 0
+        parts = [clipped] if isinstance(clipped, LineString) else list(getattr(clipped, "geoms", []))
+        created = 0
+        for part in parts:
+            coords = list(part.coords)
+            if len(coords) >= 2:
+                layer.paths.append(PathSegment(coords, layer=layer.name, color=layer.color, path_id=f"{path_id}_{created}"))
+                created += 1
+        return created
+
+    def add_masked_fill(self, region_type: str, region_params: dict, fill_style: str = "waves", spacing_mm: float = 3.0) -> dict:
+        region = self._make_region(region_type, region_params)
+        if region is None:
+            raise ValueError("Invalid mask region")
+        if not self._current:
+            raise ValueError("No SVG loaded")
+        self._push_undo()
+        layer = self._new_generated_layer(f"Masked {fill_style.title()}", "#000000")
+        min_x, min_y, max_x, max_y = region.bounds
+        created = 0
+        spacing = max(0.5, float(spacing_mm))
+        rows = int((max_y - min_y) / spacing) + 2
+        for row in range(rows):
+            y = min_y + row * spacing
+            pts = []
+            steps = max(8, int((max_x - min_x) / 2.0))
+            for i in range(steps + 1):
+                x = min_x + (max_x - min_x) * i / steps
+                if fill_style == "spiral":
+                    yy = y + math.sin(i * 0.7 + row * 0.8) * spacing * 0.4
+                elif fill_style == "maze":
+                    yy = y + ((i + row) % 2) * spacing * 0.35
+                else:
+                    yy = y + math.sin(i * 0.35) * spacing * 0.7
+                pts.append((x, yy))
+            created += self._append_clipped_polyline(layer, pts, region, f"masked_{created}")
+        self._recompute_bounds()
+        return {"created_paths": created, "layer": layer.name}
+
+    def add_maze_fill(self, spacing_mm: float = 4.0) -> dict:
+        return self.add_hatch_fill(style="chaotic", spacing_mm=spacing_mm, angle_deg=0.0)
+
+    def apply_style_preset(self, preset: str) -> dict:
+        mapping = {
+            "woodcut": ("chaotic", 2.2, 10.0),
+            "engraving": ("straight", 1.6, 45.0),
+            "topo map": ("contour", 3.0, 0.0),
+            "stipple": ("circular", 3.5, 0.0),
+            "contour lines": ("contour", 2.5, 0.0),
+            "flow field": ("chaotic", 3.0, 25.0),
+            "comic ink": ("chaotic", 2.0, 65.0),
+            "blueprint": ("straight", 5.0, 0.0),
+        }
+        style, spacing, angle = mapping.get(preset, ("straight", 3.0, 45.0))
+        return self.add_hatch_fill(style=style, spacing_mm=spacing, angle_deg=angle)
 
     @staticmethod
     def _point_dist(a: tuple[float, float], b: tuple[float, float]) -> float:
