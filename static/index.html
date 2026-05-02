@@ -1964,7 +1964,8 @@ async function removeFromQueue(idx) {
 // ===== Plot Execution =====
 
 async function plotLayer(layerName) {
-  const d = await api('/api/plot/start', {...getPendingPlotArgs(), layer_name: layerName});
+  if (!(await commitPendingPreviewTransform())) return;
+  const d = await api('/api/plot/start', {layer_name: layerName});
   if (d && d.ok) toast(`Started plotting ${layerName}`, 'success');
   else if (d === null) toast('Could not start plot (see error above)', 'error');
 }
@@ -1979,7 +1980,15 @@ async function startPlot() {
     startBtn.textContent = 'RUNNING';
   }
   plotSeconds = 0;
-  const d = await api('/api/plot/start', getPendingPlotArgs());
+  if (!(await commitPendingPreviewTransform())) {
+    plotStartPending = false;
+    if (startBtn) {
+      startBtn.disabled = false;
+      startBtn.textContent = 'START';
+    }
+    return;
+  }
+  const d = await api('/api/plot/start', {});
   if (d && d.ok) toast('Plot started','success');
   else {
     plotStartPending = false;
