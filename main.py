@@ -84,6 +84,10 @@ terminal_ws_clients: set[WebSocket] = set()
 plot_task: Optional[asyncio.Task] = None
 
 
+def _plot_is_busy() -> bool:
+    return (plot_task is not None and not plot_task.done()) or state.plot_state != PlotState.IDLE
+
+
 # ---- WebSocket broadcast ----
 
 async def broadcast_state():
@@ -354,7 +358,11 @@ async def dry_run(request: Request):
 
     if not svg_proc.has_svg:
         return JSONResponse({"error": "No SVG loaded"}, 400)
-    asyncio.create_task(execute_plot(dry=True, req_args=body))
+    global plot_task
+    if _plot_is_busy():
+        return JSONResponse({"error": "Already plotting"}, 400)
+    state.update(plot_state=PlotState.PLOTTING, current_file=svg_proc.current.filename)
+    plot_task = asyncio.create_task(execute_plot(dry=True, req_args=body))
     return {"ok": True}
 
 
@@ -975,12 +983,13 @@ async def start_plot(request: Request):
         return JSONResponse({"error": "No SVG loaded"}, 400)
     if not state.connected:
         return JSONResponse({"error": "Not connected"}, 400)
-    if state.plot_state == PlotState.PLOTTING:
+    if _plot_is_busy():
         return JSONResponse({"error": "Already plotting"}, 400)
     err = _validate_plot_bounds(body)
     if err:
         return JSONResponse({"error": err}, 400)
     global plot_task
+    state.update(plot_state=PlotState.PLOTTING, current_file=svg_proc.current.filename)
     plot_task = asyncio.create_task(execute_plot(dry=False, req_args=body))
     return {"ok": True}
 
