@@ -977,8 +977,6 @@ async def start_plot(request: Request):
         return JSONResponse({"error": "Not connected"}, 400)
     if state.plot_state == PlotState.PLOTTING:
         return JSONResponse({"error": "Already plotting"}, 400)
-    if not state.position_known:
-        return JSONResponse({"error": "Position unknown after E-stop. Jog to home and click Set Home before plotting."}, 400)
     err = _validate_plot_bounds(body)
     if err:
         return JSONResponse({"error": err}, 400)
@@ -1002,7 +1000,7 @@ async def resume_plot():
 @app.post("/api/plot/stop")
 async def stop_plot():
     serial_mgr.emergency_stop()
-    return {"ok": True}
+    return {"ok": True, "mode": "controlled_abort"}
 
 
 @app.post("/api/plot/pen_swap_done")

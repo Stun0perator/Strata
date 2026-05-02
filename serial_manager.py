@@ -96,6 +96,7 @@ class SerialManager:
         self._paused = False
         self._pause_lock = threading.Lock()
         self._emergency_stop = False
+        self._cancel_requested = False
 
         self._serial_thread: Optional[threading.Thread] = None
         self._button_thread: Optional[threading.Thread] = None
@@ -652,7 +653,7 @@ class SerialManager:
 
     def _wait_while_paused_or_stopped(self) -> bool:
         while True:
-            if self._emergency_stop or self.state.plot_state == PlotState.IDLE:
+            if self._emergency_stop or self._cancel_requested or self.state.plot_state == PlotState.IDLE:
                 return False
             with self._pause_lock:
                 paused = self._paused
@@ -807,7 +808,19 @@ class SerialManager:
         """Match Saxi's prePlot: enable motors at 16x and park the pen up."""
         if self._ser is None or not self._ser.is_open:
             return False
+
+    def _pen_up_direct(self) -> None:
+        profile = self._active_profile()
+        with self._overrides_lock:
+            o = dict(self.live_overrides)
+        pu = float(o.get("pen_pos_up", profile.get("pen_pos_up", 60)))
+        pos = self.pen_pct_to_pos(pu)
+        duration = self._pen_motion_duration_ms(True)
+        with self._serial_lock:
+            self._s2_pen_to(pos, duration)
+        self.state.update(pen_is_down=False)
         self._emergency_stop = False
+        self._cancel_requested = False
         with self._pause_lock:
             self._paused = False
         profile = self._active_profile()
@@ -950,6 +963,10 @@ class SerialManager:
         with self._pause_lock:
             self._paused = True
         self.state.update(plot_state=PlotState.PAUSED)
+        try:
+            self._pen_up_direct()
+        except Exception as e:
+            logger.warning("Pause pen-up failed: %s", e)
         self._notify_state()
 
     def resume(self):
@@ -961,22 +978,18 @@ class SerialManager:
         self._notify_state()
 
     def emergency_stop(self):
-        self._emergency_stop = True
-        with self._pause_lock:
-            self._paused = True
-        self._flush_queue()
-        try:
-            with self._serial_lock:
-                self._exchange("EM,0,0", read_timeout=0.5)
-                if self._ebb_sr_capable:
-                    self._exchange("SR,60000,0", read_timeout=0.5)
-        except Exception as e:
-            logger.warning("Emergency motor disable failed: %s", e)
-        self.state.update(plot_state=PlotState.IDLE, position_known=False)
+        self._cancel_requested = True
+        self._emergency_stop = False
         with self._pause_lock:
             self._paused = False
+        self._flush_queue()
+        try:
+            self._pen_up_direct()
+        except Exception as e:
+            logger.warning("Controlled stop pen-up failed: %s", e)
+        self.state.update(plot_state=PlotState.IDLE, position_known=True)
         self._notify_state()
-        logger.warning("EMERGENCY STOP")
+        logger.warning("CONTROLLED STOP REQUESTED")
 
     def pen_up(self):
         self.enqueue("_py:penup", Priority.MANUAL, tag="pen_up")
@@ -1006,6 +1019,8 @@ class SerialManager:
 
     def enable_motors(self):
         self._emergency_stop = False
+        if self.state.plot_state != PlotState.PLOTTING:
+            self._cancel_requested = False
         with self._pause_lock:
             self._paused = False
         self.enqueue("_raw:EM,1,1", Priority.MANUAL)
@@ -1026,6 +1041,8 @@ class SerialManager:
         if not self.state.position_known:
             return "Position unknown after E-stop. Jog to the physical home point, then click Set Home."
         self._emergency_stop = False
+        if self.state.plot_state != PlotState.PLOTTING:
+            self._cancel_requested = False
         with self._pause_lock:
             self._paused = False
         self.enable_motors()
@@ -1055,6 +1072,8 @@ class SerialManager:
 
     def jog(self, dx_mm: float, dy_mm: float) -> Optional[str]:
         self._emergency_stop = False
+        if self.state.plot_state != PlotState.PLOTTING:
+            self._cancel_requested = False
         with self._pause_lock:
             self._paused = False
         if getattr(self, "is_connected", False) or not self.state.connected:
@@ -1215,13 +1234,31 @@ class SerialManager:
         self._step_error_x = 0.0
         self._step_error_y = 0.0
         fifo_check_interval = 8
+        last_x, last_y = clean_points[0]
+        completed_distance = 0.0
         for idx, block in enumerate(blocks):
+            if self._cancel_requested:
+                self._wait_motion_complete()
+                self.state.update(current_x=last_x, current_y=last_y)
+                self._commanded_x = last_x
+                self._commanded_y = last_y
+                self.state.add_distance(completed_distance)
+                return True
             if not self._wait_while_paused_or_stopped():
                 return False
             if not self._execute_lm_block(block):
                 return False
+            last_x, last_y = block[4]
+            completed_distance += math.hypot(block[4][0] - block[3][0], block[4][1] - block[3][1])
             if self._emergency_stop:
                 return False
+            if self._cancel_requested:
+                self._wait_motion_complete()
+                self.state.update(current_x=last_x, current_y=last_y)
+                self._commanded_x = last_x
+                self._commanded_y = last_y
+                self.state.add_distance(completed_distance)
+                return True
             if idx % fifo_check_interval == (fifo_check_interval - 1) and idx < len(blocks) - 1:
                 self._wait_for_fifo_space()
         if not self._wait_motion_complete():
