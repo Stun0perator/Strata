@@ -159,6 +159,11 @@ label { font-size:0.8rem; color:var(--text-muted); }
 .drop-zone { border:2px dashed var(--border); border-radius:6px; padding:12px; text-align:center;
   color:var(--text-muted); transition:all .2s; margin-bottom:6px; cursor:pointer; font-size:0.78rem; }
 .drop-zone:hover, .drop-zone.dragover { border-color:var(--accent); color:var(--accent); background:rgba(88,166,255,0.05); }
+.drop-zone.processing { border-color:var(--accent); color:var(--accent); background:rgba(88,166,255,0.08); cursor:wait; }
+.upload-status { display:none; align-items:center; gap:6px; font-size:0.72rem; color:var(--accent); margin:0 0 5px; }
+.upload-status.active { display:flex; }
+.mini-spinner { width:12px; height:12px; border:2px solid rgba(88,166,255,0.25); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; flex:0 0 auto; }
+@keyframes spin { to { transform:rotate(360deg); } }
 
 /* layer list (legacy) */
 .layer-row { display:flex; align-items:center; gap:6px; padding:4px 8px; background:var(--surface2);
@@ -494,6 +499,7 @@ label { font-size:0.8rem; color:var(--text-muted); }
             Drop SVG or click to browse
             <input type="file" id="file-input" accept=".svg" style="display:none" onchange="handleFileUpload(this.files)">
           </div>
+          <div id="upload-status" class="upload-status"><span class="mini-spinner"></span><span id="upload-status-text">Processing SVG...</span></div>
           <div id="svg-stats" style="display:none;font-size:0.72rem;margin-bottom:4px;"></div>
           
           <div id="file-browser" style="margin-top:0.5rem;">
@@ -790,6 +796,7 @@ let plotTimer = null;
 let plotSeconds = 0;
 let swapWarningTimer = null;
 let camRecording = false;
+let uploadBusy = false;
 
 // ===== View switching =====
 function switchView(view) {
@@ -1140,6 +1147,22 @@ dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover
 dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('dragover');
   if (e.dataTransfer.files.length) handleFileUpload(e.dataTransfer.files); });
 
+function setUploadBusy(active, text='Processing SVG...') {
+  uploadBusy = active;
+  const zone = document.getElementById('drop-zone');
+  const input = document.getElementById('file-input');
+  const status = document.getElementById('upload-status');
+  const statusText = document.getElementById('upload-status-text');
+  if (zone) {
+    zone.classList.toggle('processing', active);
+    zone.textContent = active ? text : 'Drop SVG or click to browse';
+    if (input) zone.appendChild(input);
+  }
+  if (input) input.disabled = active;
+  if (status) status.classList.toggle('active', active);
+  if (statusText) statusText.textContent = text;
+}
+
 function applySvgPayload(d) {
   console.log("applySvgPayload executing with data:", d);
   if (!d || !d.preview) {
@@ -1159,9 +1182,11 @@ function applySvgPayload(d) {
     document.getElementById('vpype-card').style.display = '';
     console.log("Calling renderLayersPanel");
     renderLayersPanel(d.preview.layers);
+    setUploadBusy(false);
     console.log("applySvgPayload finished successfully");
   } catch (err) {
     console.error("Error in applySvgPayload:", err);
+    setUploadBusy(false);
   }
 }
 
@@ -1178,16 +1203,31 @@ async function deleteFile(filename, e) {
 
 async function handleFileUpload(files) {
   if (!files.length) return;
+  if (uploadBusy) return;
   const form = new FormData();
   form.append('file', files[0]);
+  setUploadBusy(true, `Uploading ${files[0].name}...`);
+  svgLoaded = false;
+  previewData = null;
+  const stats = document.getElementById('svg-stats');
+  if (stats) {
+    stats.style.display = '';
+    stats.innerHTML = `<strong>${files[0].name}</strong> — uploading and processing...`;
+  }
   try {
     const r = await fetch('/api/svg/upload', {method:'POST', body:form});
+    setUploadBusy(true, `Processing ${files[0].name}...`);
     const d = await r.json();
     if (d.error) { toast(d.error,'error'); return; }
-    // applySvgPayload(d); // REMOVED to prevent double execution (WebSocket sends it too)
+    applySvgPayload(d);
     toast('SVG uploaded successfully','success');
     loadFiles(); // refresh file list after upload
   } catch(e) { toast('Upload failed','error'); }
+  finally {
+    setUploadBusy(false);
+    const input = document.getElementById('file-input');
+    if (input) input.value = '';
+  }
 }
 
 async function loadFiles() {
