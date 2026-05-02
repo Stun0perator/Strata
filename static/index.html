@@ -796,6 +796,7 @@ let plotSeconds = 0;
 let swapWarningTimer = null;
 let camRecording = false;
 let uploadBusy = false;
+let plotStartPending = false;
 
 // ===== View switching =====
 function switchView(view) {
@@ -867,6 +868,12 @@ function updateTelemetry(d) {
   if (d.plot_state === 'plotting' && !plotTimer) startTimer();
   else if (d.plot_state === 'paused' && plotTimer) stopTimer();
   else if (d.plot_state === 'idle' && plotTimer) { stopTimer(); plotSeconds = 0; }
+  const startBtn = document.getElementById('btn-start');
+  if (startBtn) {
+    const busy = plotStartPending || ['plotting', 'paused', 'dipping', 'pen_swap'].includes(d.plot_state);
+    startBtn.disabled = busy;
+    startBtn.textContent = busy ? 'RUNNING' : 'START';
+  }
 
   const stateEl = document.getElementById('t-state');
   stateEl.style.color = {idle:'var(--text-muted)',plotting:'var(--green)',
@@ -1963,16 +1970,36 @@ async function plotLayer(layerName) {
 }
 
 async function startPlot() {
+  if (plotStartPending) return;
   if (!confirm('Start plot?')) return;
+  plotStartPending = true;
+  const startBtn = document.getElementById('btn-start');
+  if (startBtn) {
+    startBtn.disabled = true;
+    startBtn.textContent = 'RUNNING';
+  }
   plotSeconds = 0;
   const d = await api('/api/plot/start', getPendingPlotArgs());
   if (d && d.ok) toast('Plot started','success');
+  else {
+    plotStartPending = false;
+    if (startBtn) {
+      startBtn.disabled = false;
+      startBtn.textContent = 'START';
+    }
+  }
 }
 function pausePlot() { api('/api/plot/pause'); }
 function resumePlot() { api('/api/plot/resume'); }
 function emergencyStop() { api('/api/plot/stop'); toast('EMERGENCY STOP','error'); }
 
 function onPlotComplete(data) {
+  plotStartPending = false;
+  const startBtn = document.getElementById('btn-start');
+  if (startBtn) {
+    startBtn.disabled = false;
+    startBtn.textContent = 'START';
+  }
   stopTimer();
   if (data.error) { toast(data.error, 'error'); return; }
   if (data.dry_run) { toast('Dry run complete','info'); }

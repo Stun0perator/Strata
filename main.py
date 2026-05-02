@@ -1190,6 +1190,10 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
         offset_y=offset_y,
         layer_name=layer_name,
     )
+    instruction_counts: dict[str, int] = {}
+    for instr in instructions:
+        itype = instr.get("type", "unknown")
+        instruction_counts[itype] = instruction_counts.get(itype, 0) + 1
     plotted_layers = [
         l for l in sorted(svg_proc.current.enabled_layers(), key=lambda l: l.order)
         if not layer_name or l.name == layer_name
@@ -1204,6 +1208,15 @@ async def execute_plot(dry: bool = False, req_args: dict = None):
         total_dist = svg_proc.current.total_distance() * distance_scale
         total_paths = svg_proc.current.total_paths()
         total_layers = len(svg_proc.current.enabled_layers())
+    logger.info(
+        "Plot plan: file=%s layer=%s enabled_layers=%s paths=%s distance=%.1fmm instructions=%s",
+        svg_proc.current.filename if svg_proc.current else "",
+        layer_name or "all",
+        [l.name for l in plotted_layers],
+        total_paths,
+        total_dist,
+        instruction_counts,
+    )
 
     state.reset_for_new_plot(total_dist, total_paths, total_layers)
     state.update(
