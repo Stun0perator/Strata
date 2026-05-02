@@ -335,7 +335,7 @@ label { font-size:0.8rem; color:var(--text-muted); }
 #home-settings { grid-column:2; grid-row:2; min-width:0; }
 #home-manual { grid-column:1; grid-row:3; min-width:0; }
 #home-upload { grid-column:2; grid-row:3; min-width:0; }
-#home-execution { grid-column:1; grid-row:4; min-width:0; }
+#home-execution { grid-column:1; grid-row:4; min-width:0; display:flex; flex-direction:column; gap:6px; min-height:0; overflow:hidden; }
 #home-vpype-wrap { grid-column:2; grid-row:4; min-width:0; }
 #queue-card { display:none !important; }
 #view-home .panel,
@@ -377,9 +377,20 @@ label { font-size:0.8rem; color:var(--text-muted); }
 #home-settings #profile-badge { display:none !important; }
 #home-settings .dim-display { font-size:0.62rem; margin-top:1px; }
 #home-settings select, #home-settings button { font-size:0.68rem; padding:3px 7px; }
-#home-execution > .card { height:100%; }
+#home-execution > .card { height:auto; }
 #home-execution .btn-row { margin-bottom:0; align-items:center; }
 #home-execution button { padding:5px 10px !important; font-size:0.72rem !important; }
+#execution-card { flex:0 0 auto; }
+#home-paint { flex:1 1 auto; min-height:0; overflow:hidden; }
+#home-paint .paint-checks { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:4px; font-size:0.66rem; }
+#home-paint .paint-grid { display:grid; grid-template-columns:1fr 1fr; gap:2px 8px; }
+#home-paint .form-row { margin-bottom:0; gap:5px; flex-wrap:nowrap; }
+#home-paint .form-row label { min-width:62px; font-size:0.63rem; }
+#home-paint .form-row input[type=range] { min-width:44px; }
+#home-paint .form-row .val { min-width:20px; font-size:0.62rem; }
+#home-paint .paint-actions { display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; align-items:center; }
+#home-paint .paint-actions button { padding:3px 7px !important; font-size:0.66rem !important; }
+#tray-coords { font-size:0.64rem !important; margin-top:3px !important; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 #vpype-card {
   display:block !important;
   height:100%;
@@ -401,7 +412,6 @@ label { font-size:0.8rem; color:var(--text-muted); }
   <div class="logo">STRATA<small>Plotter Control System</small></div>
   <nav>
     <a href="#" data-tab="home" class="active"><span class="icon">&#9776;</span>Home</a>
-    <a href="#" data-tab="paint"><span class="icon">&#127912;</span>Paint Mode</a>
     <a href="#" data-tab="terminal"><span class="icon">&#9002;</span>Terminal</a>
     <a href="#" data-tab="history"><span class="icon">&#128203;</span>History</a>
   </nav>
@@ -511,8 +521,8 @@ label { font-size:0.8rem; color:var(--text-muted); }
           </div>
         </div>
       
-      <div id="home-execution" style="display:flex; gap:10px;">
-        <div class="card" style="margin-bottom:0;flex:1">
+      <div id="home-execution">
+        <div class="card" id="execution-card" style="margin-bottom:0">
             <h3>Execution</h3>
             <div class="btn-row" style="margin-bottom:0">
               <button class="success" onclick="startPlot()" id="btn-start" style="padding:6px 16px">START</button>
@@ -521,11 +531,39 @@ label { font-size:0.8rem; color:var(--text-muted); }
               <button class="danger" onclick="emergencyStop()" style="padding:6px 16px">E-STOP</button>
             </div>
           </div>
-        <div class="card" style="margin-bottom:0;flex:1" id="queue-card">
-            <h3>Plot Queue</h3>
-            <div id="queue-list" style="max-height:60px;overflow-y:auto;"></div>
-            <button onclick="addToQueue()" style="margin-top:3px;font-size:0.7rem;padding:2px 8px">Add to Queue</button>
+        <div class="card" id="home-paint" style="margin-bottom:0">
+          <h3>Paint Mode</h3>
+          <div class="paint-checks">
+            <label><input type="checkbox" id="p-enabled" onchange="savePaintSettings()"> Enable Paint Mode</label>
+            <label><input type="checkbox" id="p-taper-on" onchange="savePaintSettings()"> Brush taper</label>
           </div>
+          <div class="paint-grid">
+            <div class="form-row"><label>Dip Dist</label>
+              <input type="range" min="10" max="500" value="80" id="p-dip-thresh" oninput="updatePaintVal()">
+              <span class="val" id="v-dip-thresh">80</span></div>
+            <div class="form-row"><label>Swirl Dia</label>
+              <input type="range" min="2" max="30" value="8" id="p-swirl-d" oninput="updatePaintVal()">
+              <span class="val" id="v-swirl-d">8</span></div>
+            <div class="form-row"><label>Swirls</label>
+              <input type="range" min="1" max="10" value="3" id="p-swirl-n" oninput="updatePaintVal()">
+              <span class="val" id="v-swirl-n">3</span></div>
+            <div class="form-row"><label>Swirl Spd</label>
+              <input type="range" min="1" max="100" value="25" id="p-swirl-speed" oninput="updatePaintVal()">
+              <span class="val" id="v-swirl-speed">25</span></div>
+            <div class="form-row"><label>Tray Ht</label>
+              <input type="range" min="0" max="100" value="30" id="p-tray-depth" oninput="updatePaintVal()">
+              <span class="val" id="v-tray-depth">30</span></div>
+            <div class="form-row"><label>Taper</label>
+              <input type="range" min="0" max="10" step="0.5" value="2" id="p-taper-mm" oninput="updatePaintVal()">
+              <span class="val" id="v-taper-mm">2</span></div>
+          </div>
+          <div class="paint-actions">
+            <button class="primary" onclick="api('/api/paint/save_tray')">Save Tray</button>
+            <button onclick="api('/api/paint/save_water_dish')">Save Water</button>
+            <button onclick="api('/api/paint/test_dip')">Test Dip</button>
+          </div>
+          <div id="tray-coords"></div>
+        </div>
       </div>
 
       <div class="panel" id="home-settings">
@@ -632,46 +670,6 @@ label { font-size:0.8rem; color:var(--text-muted); }
       </div>
     </div><!-- /view-home -->
     
-    <div class="bottom-view tab-content" id="view-paint">
-      <div class="card">
-        <h3>Paint / Dip Settings</h3>
-        <div class="form-row"><label><input type="checkbox" id="p-enabled" onchange="savePaintSettings()"> Enable Paint Mode</label></div>
-        <div class="form-row"><label>Dip Threshold</label>
-          <input type="range" min="10" max="500" value="80" id="p-dip-thresh" oninput="updatePaintVal()">
-          <span class="val" id="v-dip-thresh">80</span> mm</div>
-        <div class="form-row"><label>Swirl Diameter</label>
-          <input type="range" min="2" max="30" value="8" id="p-swirl-d" oninput="updatePaintVal()">
-          <span class="val" id="v-swirl-d">8</span> mm</div>
-        <div class="form-row"><label>Swirl Count</label>
-          <input type="range" min="1" max="10" value="3" id="p-swirl-n" oninput="updatePaintVal()">
-          <span class="val" id="v-swirl-n">3</span></div>
-        <div class="form-row"><label>Swirl Speed</label>
-          <input type="range" min="1" max="100" value="25" id="p-swirl-speed" oninput="updatePaintVal()">
-          <span class="val" id="v-swirl-speed">25</span></div>
-        <div class="form-row"><label>Tray Pen-Down Depth</label>
-          <input type="range" min="0" max="100" value="30" id="p-tray-depth" oninput="updatePaintVal()">
-          <span class="val" id="v-tray-depth">30</span></div>
-      </div>
-      <div class="card">
-        <h3>Brush Pressure Taper</h3>
-        <div class="form-row"><label><input type="checkbox" id="p-taper-on" onchange="savePaintSettings()"> Compensate brush dry-out</label></div>
-        <div class="form-row"><label>Taper Amount</label>
-          <input type="range" min="0" max="10" step="0.5" value="2" id="p-taper-mm" oninput="updatePaintVal()">
-          <span class="val" id="v-taper-mm">2</span> mm</div>
-      </div>
-      <div class="card">
-        <h3>Tray Calibration</h3>
-        <div class="btn-row">
-          <button class="primary" onclick="api('/api/paint/save_tray')">Save Tray Location</button>
-          <button onclick="api('/api/paint/save_water_dish')">Save Water Dish</button>
-          <button onclick="api('/api/paint/test_dip')">Test Dip</button>
-        </div>
-        <div style="font-size:0.78rem;color:var(--text-muted);margin-top:6px;">
-          Use the Jog pad to position the head, then save locations here.
-        </div>
-        <div id="tray-coords" style="font-size:0.78rem;margin-top:6px;"></div>
-      </div>
-    </div>
     <div class="bottom-view tab-content" id="view-terminal">
       <div id="terminal-container"></div>
     </div>
