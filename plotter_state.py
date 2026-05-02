@@ -34,6 +34,7 @@ class PlotterState:
     firmware_version: str = ""
     serial_port: str = ""
     current_file: str = ""
+    position_known: bool = True
     plot_start_time: Optional[float] = None
     errors: list = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -66,6 +67,7 @@ class PlotterState:
                 "firmware_version": self.firmware_version,
                 "serial_port": self.serial_port,
                 "current_file": self.current_file or "",
+                "position_known": self.position_known,
                 "plot_start_time": self.plot_start_time,
             }
 

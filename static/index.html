@@ -477,9 +477,10 @@ label { font-size:0.8rem; color:var(--text-muted); }
           </div>
           <h4>Position</h4>
           <div class="btn-row">
-            <button onclick="api('/api/home')">Walk Home</button>
-            <button onclick="api('/api/set_home')">Set Home</button>
+            <button onclick="walkHome()">Walk Home</button>
+            <button onclick="setHome()">Set Home</button>
           </div>
+          <div id="home-warning" style="display:none;color:var(--orange);font-size:0.66rem;margin-top:3px;">Position unknown. Jog to physical home, then Set Home.</div>
           <h4>Motors</h4>
           <div class="btn-row">
             <button onclick="api('/api/motors/enable')">Enable</button>
@@ -849,7 +850,9 @@ function updateTelemetry(d) {
   document.getElementById('connect-btn').textContent = d.connected ? 'Disconnect' : 'Connect';
   document.getElementById('firmware-info').textContent = d.connected && d.firmware_version ? 'FW: ' + d.firmware_version : '';
 
-  document.getElementById('t-pos').textContent = `${d.current_x}, ${d.current_y}`;
+  document.getElementById('t-pos').textContent = d.position_known === false ? 'Unknown' : `${d.current_x}, ${d.current_y}`;
+  const homeWarning = document.getElementById('home-warning');
+  if (homeWarning) homeWarning.style.display = d.position_known === false ? '' : 'none';
   document.getElementById('t-state').textContent = d.plot_state.charAt(0).toUpperCase() + d.plot_state.slice(1);
   document.getElementById('t-layer').textContent = d.current_layer ?
     `${d.current_layer} (${d.current_layer_index}/${d.total_layers})` : '—';
@@ -955,6 +958,14 @@ function setStep(s) {
   document.querySelectorAll('.step-sizes button').forEach(b => b.classList.toggle('active', parseFloat(b.textContent)===s));
 }
 function doJog(dx, dy) { api('/api/jog', {dx:dx*jogStep, dy:dy*jogStep}); }
+async function walkHome() {
+  const d = await api('/api/home');
+  if (d && d.ok) toast('Walking home','info');
+}
+async function setHome() {
+  const d = await api('/api/set_home');
+  if (d && d.ok) toast('Home set','success');
+}
 
 // ===== Model change =====
 const MODEL_DIMS = {

@@ -294,6 +294,7 @@ class SerialManager:
                 connected=True,
                 firmware_version=fw_ver,
                 serial_port=port,
+                position_known=True,
             )
             self.config.set("last_serial_port", port)
             self._running = True
@@ -971,7 +972,7 @@ class SerialManager:
                     self._exchange("SR,60000,0", read_timeout=0.5)
         except Exception as e:
             logger.warning("Emergency motor disable failed: %s", e)
-        self.state.update(plot_state=PlotState.IDLE)
+        self.state.update(plot_state=PlotState.IDLE, position_known=False)
         with self._pause_lock:
             self._paused = False
         self._notify_state()
@@ -1017,11 +1018,13 @@ class SerialManager:
             self.enqueue("_raw:SR,60000,0", Priority.MANUAL)
 
     def set_home(self):
-        self.state.update(current_x=0.0, current_y=0.0)
+        self.state.update(current_x=0.0, current_y=0.0, position_known=True)
         self._commanded_x = 0.0
         self._commanded_y = 0.0
 
-    def walk_home(self):
+    def walk_home(self) -> Optional[str]:
+        if not self.state.position_known:
+            return "Position unknown after E-stop. Jog to the physical home point, then click Set Home."
         self._emergency_stop = False
         with self._pause_lock:
             self._paused = False
@@ -1032,7 +1035,7 @@ class SerialManager:
             self.state.update(current_x=0.0, current_y=0.0)
             self._commanded_x = 0.0
             self._commanded_y = 0.0
-            return
+            return None
         self._commanded_x = 0.0
         self._commanded_y = 0.0
         self._step_error_x = 0.0
@@ -1048,6 +1051,7 @@ class SerialManager:
             callback=_home_cb,
             tag="travel",
         )
+        return None
 
     def jog(self, dx_mm: float, dy_mm: float) -> Optional[str]:
         self._emergency_stop = False
@@ -1061,6 +1065,14 @@ class SerialManager:
             bed_h = float(self.config.get("bed_height_mm", 218) or 218)
         except (TypeError, ValueError):
             bed_w, bed_h = 300.0, 218.0
+
+        if not self.state.position_known:
+            self.enqueue(
+                f"_py:go,{float(dx_mm):.6f},{float(dy_mm):.6f}",
+                Priority.MANUAL,
+                tag="travel",
+            )
+            return None
             
         if self._cmd_queue.empty() and self.state.plot_state == PlotState.IDLE:
             self._commanded_x = float(self.state.current_x)
