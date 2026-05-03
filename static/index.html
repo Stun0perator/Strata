@@ -1959,6 +1959,7 @@ async function loadQueue() {
 }
 function renderQueue(q) {
   const el = document.getElementById('queue-list');
+  if (!el) return;
   if (!q.length) { el.innerHTML = '<div style="color:var(--text-muted);font-size:0.7rem;padding:2px">Queue empty</div>'; return; }
   el.innerHTML = '';
   q.forEach((item,i) => {

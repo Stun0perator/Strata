@@ -15,7 +15,7 @@ from shapely.geometry import LineString, Polygon, MultiLineString, Point
 
 if TYPE_CHECKING:
     from config_manager import ConfigManager
-from shapely.ops import split
+from shapely.ops import split, unary_union
 
 logger = logging.getLogger("strata.svg")
 
@@ -473,9 +473,34 @@ class SVGProcessor:
             if name == "deduplicate":
                 removed = self.deduplicate_paths(float(op.get("tolerance", 0.1) or 0.1), push_undo=not native_applied)
                 native_applied.append(f"deduplicate ({removed} removed)")
+            elif name == "linemerge":
+                merged = self.linemerge_paths(float(op.get("tolerance", 0.5) or 0.5), push_undo=not native_applied)
+                native_applied.append(f"linemerge ({merged} joined)")
+            elif name == "linesort":
+                changed = self.linesort_paths(push_undo=not native_applied)
+                native_applied.append(f"linesort ({changed} layers)")
+            elif name == "filter":
+                removed = self.filter_short_paths(float(op.get("min_length", 1.0) or 1.0), push_undo=not native_applied)
+                native_applied.append(f"filter ({removed} removed)")
+            elif name == "splitall":
+                changed = self.splitall_paths(push_undo=not native_applied)
+                native_applied.append(f"splitall ({changed} paths)")
             elif name == "reloop":
                 changed = self.reloop_paths(push_undo=not native_applied)
                 native_applied.append(f"reloop ({changed} changed)")
+            elif name == "scaleto":
+                self.scaleto_canvas(op.get("width"), op.get("height"), push_undo=not native_applied)
+                native_applied.append("scaleto")
+            elif name == "perspective":
+                changed = self.apply_perspective_native(op, push_undo=not native_applied)
+                native_applied.append(f"perspective ({changed} paths)")
+            elif name == "occult":
+                changed = self.occult_paths_native(
+                    keep_hidden=bool(op.get("keep")),
+                    ignore_layers=bool(op.get("ignore_layers")),
+                    push_undo=not native_applied,
+                )
+                native_applied.append(f"occult ({changed} paths)")
             else:
                 vpype_operations.append(op)
 
@@ -628,16 +653,16 @@ class SVGProcessor:
             for seg in layer.paths:
                 if len(seg.points) < 2:
                     continue
-                points = " ".join(f"{x:.6f},{y:.6f}" for x, y in seg.points)
+                d = "M " + " L ".join(f"{x:.6f} {y:.6f}" for x, y in seg.points)
                 attrs = {
-                    "points": points,
+                    "d": d,
                     "fill": "none",
                     "stroke": seg.color or layer.color or "#000000",
                     "stroke-width": str(seg.stroke_width or 1.0),
                 }
                 if seg.path_id:
                     attrs["id"] = str(seg.path_id)
-                ET.SubElement(group, "polyline", attrs)
+                ET.SubElement(group, "path", attrs)
         ET.ElementTree(root).write(filepath, encoding="utf-8", xml_declaration=True)
 
     def deduplicate_paths(self, tolerance_mm: float = 0.1, push_undo: bool = True) -> int:
@@ -682,6 +707,181 @@ class SVGProcessor:
                 relooped.append(relooped[0])
                 seg.points = relooped
                 changed += 1
+        return changed
+
+    def linemerge_paths(self, tolerance_mm: float = 0.5, push_undo: bool = True) -> int:
+        if not self._current:
+            return 0
+        if push_undo:
+            self._push_undo()
+        joined_count = 0
+        for layer in self._current.layers:
+            before = len(layer.paths)
+            layer.paths = self._saxi_order_and_join_paths(layer.paths, join_radius=max(float(tolerance_mm or 0.5), 1e-6))
+            for seg in layer.paths:
+                seg.layer = layer.name
+                seg.color = seg.color or layer.color
+            joined_count += max(0, before - len(layer.paths))
+        if joined_count:
+            self._recompute_bounds()
+        return joined_count
+
+    def linesort_paths(self, push_undo: bool = True) -> int:
+        if not self._current:
+            return 0
+        if push_undo:
+            self._push_undo()
+        changed_layers = 0
+        for layer in self._current.layers:
+            sorted_paths = self._saxi_order_and_join_paths(layer.paths, join_radius=0.0)
+            if [p.path_id for p in sorted_paths] != [p.path_id for p in layer.paths]:
+                changed_layers += 1
+            layer.paths = sorted_paths
+        return changed_layers
+
+    def filter_short_paths(self, min_length_mm: float = 1.0, push_undo: bool = True) -> int:
+        if not self._current:
+            return 0
+        if push_undo:
+            self._push_undo()
+        min_len = max(float(min_length_mm or 1.0), 0.0)
+        removed = 0
+        for layer in self._current.layers:
+            kept = [seg for seg in layer.paths if seg.length_mm() >= min_len]
+            removed += len(layer.paths) - len(kept)
+            layer.paths = kept
+        if removed:
+            self._recompute_bounds()
+        return removed
+
+    def splitall_paths(self, push_undo: bool = True) -> int:
+        if not self._current:
+            return 0
+        if push_undo:
+            self._push_undo()
+        changed = 0
+        for layer in self._current.layers:
+            split_paths: list[PathSegment] = []
+            for seg in layer.paths:
+                if len(seg.points) <= 2:
+                    split_paths.append(seg)
+                    continue
+                for idx in range(1, len(seg.points)):
+                    split_paths.append(PathSegment(
+                        points=[seg.points[idx - 1], seg.points[idx]],
+                        layer=layer.name,
+                        color=seg.color,
+                        stroke_width=seg.stroke_width,
+                        path_id=f"{seg.path_id or 'seg'}_{idx}",
+                    ))
+                changed += 1
+            layer.paths = split_paths
+        return changed
+
+    def scaleto_canvas(self, width, height, push_undo: bool = True) -> None:
+        if not self._current:
+            return
+        if push_undo:
+            self._push_undo()
+        try:
+            target_w = float(width)
+            target_h = float(height)
+        except (TypeError, ValueError):
+            target_w, target_h = self._bed_dims_from_config()
+            target_w = target_w or self._current.width_mm
+            target_h = target_h or self._current.height_mm
+        self._recompute_bounds()
+        b = self._current
+        cur_w = max(b.max_x - b.min_x, 1e-9)
+        cur_h = max(b.max_y - b.min_y, 1e-9)
+        factor = min(target_w / cur_w, target_h / cur_h)
+        for layer in self._current.layers:
+            for seg in layer.paths:
+                seg.points = [((px - b.min_x) * factor, (py - b.min_y) * factor) for px, py in seg.points]
+        self._current.width_mm = target_w
+        self._current.height_mm = target_h
+        self._recompute_bounds()
+
+    def apply_perspective_native(self, op: dict, push_undo: bool = True) -> int:
+        if not self._current:
+            return 0
+        if push_undo:
+            self._push_undo()
+        pan = math.radians(float(op.get("pan", 0) or 0))
+        tilt = math.radians(float(op.get("tilt", 0) or 0))
+        hfov = max(10.0, min(140.0, float(op.get("hfov", 60) or 60)))
+        depth = max(self._current.width_mm, self._current.height_mm, 1.0) / math.tan(math.radians(hfov) / 2.0)
+        self._recompute_bounds()
+        cx = (self._current.min_x + self._current.max_x) / 2.0
+        cy = (self._current.min_y + self._current.max_y) / 2.0
+        changed = 0
+        for layer in self._current.layers:
+            for seg in layer.paths:
+                new_pts = []
+                for px, py in seg.points:
+                    x = px - cx
+                    y = py - cy
+                    z = x * math.sin(pan) + y * math.sin(tilt)
+                    denom = max(0.1, depth + z)
+                    factor = depth / denom
+                    new_pts.append((cx + x * factor, cy + y * factor))
+                seg.points = new_pts
+                changed += 1
+        self._recompute_bounds()
+        return changed
+
+    def occult_paths_native(self, keep_hidden: bool = False, ignore_layers: bool = False, push_undo: bool = True) -> int:
+        if not self._current:
+            return 0
+        if push_undo:
+            self._push_undo()
+        changed = 0
+        hidden_layer = None
+        if keep_hidden:
+            hidden_layer = self._new_generated_layer("Occult Hidden", "#999999")
+            hidden_layer.enabled = False
+        occluders = []
+        for layer in sorted(self._current.layers, key=lambda l: l.order):
+            if hidden_layer and layer.name == hidden_layer.name:
+                continue
+            layer_occluders = [] if ignore_layers else list(occluders)
+            new_paths: list[PathSegment] = []
+            for seg in layer.paths:
+                if len(seg.points) >= 4 and self._point_dist(seg.points[0], seg.points[-1]) <= 0.5:
+                    try:
+                        poly = Polygon(seg.points)
+                        if poly.is_valid and poly.area > 1e-6:
+                            layer_occluders.append(poly)
+                    except Exception:
+                        pass
+                if not occluders:
+                    new_paths.append(seg)
+                    continue
+                try:
+                    line = LineString(seg.points)
+                    mask = unary_union(occluders)
+                    visible = line.difference(mask)
+                    hidden = line.intersection(mask) if keep_hidden else None
+                except Exception:
+                    new_paths.append(seg)
+                    continue
+                parts = [visible] if isinstance(visible, LineString) else list(getattr(visible, "geoms", []))
+                if len(parts) != 1 or (parts and list(parts[0].coords) != seg.points):
+                    changed += 1
+                for idx, part in enumerate(parts):
+                    coords = list(part.coords)
+                    if len(coords) >= 2:
+                        new_paths.append(PathSegment(coords, layer=layer.name, color=seg.color, stroke_width=seg.stroke_width, path_id=f"{seg.path_id}_occ_{idx}"))
+                if keep_hidden and hidden_layer and hidden and not hidden.is_empty:
+                    hparts = [hidden] if isinstance(hidden, LineString) else list(getattr(hidden, "geoms", []))
+                    for idx, part in enumerate(hparts):
+                        coords = list(part.coords)
+                        if len(coords) >= 2:
+                            hidden_layer.paths.append(PathSegment(coords, layer=hidden_layer.name, color=hidden_layer.color, path_id=f"hidden_{changed}_{idx}"))
+            layer.paths = new_paths
+            occluders.extend(layer_occluders)
+        if changed:
+            self._recompute_bounds()
         return changed
 
     @staticmethod

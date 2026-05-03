@@ -582,6 +582,7 @@ async def run_vpype(request: Request):
     try:
         stats = svg_proc.run_vpype(operations)
     except (RuntimeError, ValueError) as e:
+        logger.exception("SVG tool/vpype error")
         return JSONResponse({"error": str(e)}, 500)
     return {
         "stats": stats,
