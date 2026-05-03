@@ -382,12 +382,12 @@ label { font-size:0.8rem; color:var(--text-muted); }
 #home-execution button { padding:5px 10px !important; font-size:0.72rem !important; }
 #execution-card { flex:0 0 auto; }
 #home-paint { flex:1 1 auto; min-height:0; overflow:hidden; }
-#home-paint .paint-checks { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:4px; font-size:0.66rem; }
-#home-paint .paint-grid { display:grid; grid-template-columns:1fr 1fr; gap:2px 8px; }
-#home-paint .form-row { margin-bottom:0; gap:5px; flex-wrap:nowrap; }
-#home-paint .form-row label { min-width:62px; font-size:0.63rem; }
-#home-paint .form-row input[type=range] { min-width:44px; }
-#home-paint .form-row .val { min-width:20px; font-size:0.62rem; }
+#home-paint .paint-checks { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:5px; font-size:0.66rem; }
+#home-paint .paint-grid { display:flex; flex-direction:column; gap:3px; }
+#home-paint .form-row { margin-bottom:0; gap:6px; flex-wrap:nowrap; }
+#home-paint .form-row label { flex:0 0 66px; min-width:0; font-size:0.63rem; }
+#home-paint .form-row input[type=range] { flex:1 1 auto; min-width:90px; }
+#home-paint .form-row .val { flex:0 0 52px; min-width:52px; text-align:right; font-size:0.62rem; white-space:nowrap; }
 #home-paint .paint-actions { display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; align-items:center; }
 #home-paint .paint-actions button { padding:3px 7px !important; font-size:0.66rem !important; }
 #tray-coords { font-size:0.64rem !important; margin-top:3px !important; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -540,22 +540,22 @@ label { font-size:0.8rem; color:var(--text-muted); }
           <div class="paint-grid">
             <div class="form-row"><label>Dip Dist</label>
               <input type="range" min="10" max="500" value="80" id="p-dip-thresh" oninput="updatePaintVal()">
-              <span class="val" id="v-dip-thresh">80</span></div>
+              <span class="val" id="v-dip-thresh">80 mm</span></div>
             <div class="form-row"><label>Swirl Dia</label>
               <input type="range" min="2" max="30" value="8" id="p-swirl-d" oninput="updatePaintVal()">
-              <span class="val" id="v-swirl-d">8</span></div>
+              <span class="val" id="v-swirl-d">8 mm</span></div>
             <div class="form-row"><label>Swirls</label>
               <input type="range" min="1" max="10" value="3" id="p-swirl-n" oninput="updatePaintVal()">
               <span class="val" id="v-swirl-n">3</span></div>
             <div class="form-row"><label>Swirl Spd</label>
               <input type="range" min="1" max="100" value="25" id="p-swirl-speed" oninput="updatePaintVal()">
-              <span class="val" id="v-swirl-speed">25</span></div>
+              <span class="val" id="v-swirl-speed">25%</span></div>
             <div class="form-row"><label>Tray Ht</label>
               <input type="range" min="0" max="100" value="30" id="p-tray-depth" oninput="updatePaintVal()">
-              <span class="val" id="v-tray-depth">30</span></div>
+              <span class="val" id="v-tray-depth">30%</span></div>
             <div class="form-row"><label>Taper</label>
               <input type="range" min="0" max="10" step="0.5" value="2" id="p-taper-mm" oninput="updatePaintVal()">
-              <span class="val" id="v-taper-mm">2</span></div>
+              <span class="val" id="v-taper-mm">2 mm</span></div>
           </div>
           <div class="paint-actions">
             <button class="primary" onclick="api('/api/paint/save_tray')">Save Tray</button>
@@ -1051,10 +1051,20 @@ function populatePaintSettings(p) {
   for (const [k,[sid,vid]] of Object.entries(pm)) {
     if (p[k] !== undefined) {
       document.getElementById(sid).value = p[k];
-      document.getElementById(vid).textContent = p[k];
+      document.getElementById(vid).textContent = paintLabelText(k, p[k]);
     }
   }
   if (p.pressure_taper_enabled !== undefined) document.getElementById('p-taper-on').checked = p.pressure_taper_enabled;
+}
+function paintLabelText(key, value) {
+  const units = {
+    dip_threshold_mm: ' mm',
+    swirl_diameter_mm: ' mm',
+    swirl_speed: '%',
+    tray_pen_down_depth: '%',
+    pressure_taper_mm: ' mm',
+  };
+  return `${value}${units[key] || ''}`;
 }
 const SLIDER_LABEL_IDS = {
   speed_pendown: 'v-speed-down', speed_penup: 'v-speed-up', pen_pos_down: 'v-pen-down',
@@ -1147,12 +1157,12 @@ async function duplicateProfile() {
 
 // ===== Paint =====
 function updatePaintVal() {
-  document.getElementById('v-dip-thresh').textContent = document.getElementById('p-dip-thresh').value;
-  document.getElementById('v-swirl-d').textContent = document.getElementById('p-swirl-d').value;
+  document.getElementById('v-dip-thresh').textContent = document.getElementById('p-dip-thresh').value + ' mm';
+  document.getElementById('v-swirl-d').textContent = document.getElementById('p-swirl-d').value + ' mm';
   document.getElementById('v-swirl-n').textContent = document.getElementById('p-swirl-n').value;
-  document.getElementById('v-swirl-speed').textContent = document.getElementById('p-swirl-speed').value;
-  document.getElementById('v-tray-depth').textContent = document.getElementById('p-tray-depth').value;
-  document.getElementById('v-taper-mm').textContent = document.getElementById('p-taper-mm').value;
+  document.getElementById('v-swirl-speed').textContent = document.getElementById('p-swirl-speed').value + '%';
+  document.getElementById('v-tray-depth').textContent = document.getElementById('p-tray-depth').value + '%';
+  document.getElementById('v-taper-mm').textContent = document.getElementById('p-taper-mm').value + ' mm';
 }
 function savePaintSettings() { saveCurrentProfile(); }
 
