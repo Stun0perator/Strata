@@ -466,14 +466,36 @@ class SVGProcessor:
             "distance_mm": round(self._current.total_distance(), 1) if self._current else 0,
         }
 
+        native_applied: list[str] = []
+        vpype_operations: list[dict] = []
+        for op in operations:
+            name = op.get("name", "")
+            if name == "deduplicate":
+                removed = self.deduplicate_paths(float(op.get("tolerance", 0.1) or 0.1), push_undo=not native_applied)
+                native_applied.append(f"deduplicate ({removed} removed)")
+            elif name == "reloop":
+                changed = self.reloop_paths(push_undo=not native_applied)
+                native_applied.append(f"reloop ({changed} changed)")
+            else:
+                vpype_operations.append(op)
+
+        input_path = self._original_svg_path
+        native_tmp = None
+        if native_applied:
+            native_tmp = tempfile.NamedTemporaryFile(suffix=".svg", delete=False)
+            native_tmp.close()
+            self._write_current_svg(native_tmp.name)
+            input_path = native_tmp.name
+
         tmp = tempfile.NamedTemporaryFile(suffix=".svg", delete=False)
         tmp.close()
+        output_path = tmp.name
         skipped: list[str] = []
 
         def build_cmd(skip_names: set[str]) -> list[str]:
-            cmd = ["vpype", "read", self._original_svg_path]
+            cmd = ["vpype", "read", input_path]
 
-            for op in operations:
+            for op in vpype_operations:
                 name = op.get("name", "")
                 if not name or name in skip_names:
                     continue
@@ -538,31 +560,34 @@ class SVGProcessor:
             cmd += ["write", tmp.name]
             return cmd
 
-        skip_names: set[str] = set()
-        while True:
-            try:
-                result = subprocess.run(build_cmd(skip_names), capture_output=True, text=True, timeout=60)
-            except FileNotFoundError:
-                raise RuntimeError("vpype not installed or not in PATH")
-            if result.returncode != 0:
-                stderr = result.stderr or ""
-                match = re.search(r"No such command '([^']+)'", stderr)
-                if match:
-                    missing = match.group(1)
-                    if missing in skip_names:
-                        raise RuntimeError(f"vpype error: {stderr}")
-                    skip_names.add(missing)
-                    skipped.append(missing)
-                    logger.warning("Skipping unavailable vpype command: %s", missing)
-                    continue
-                raise RuntimeError(f"vpype error: {stderr}")
-            break
+        if vpype_operations:
+            skip_names: set[str] = set()
+            while True:
+                try:
+                    result = subprocess.run(build_cmd(skip_names), capture_output=True, text=True, timeout=60)
+                except FileNotFoundError:
+                    raise RuntimeError("vpype not installed or not in PATH")
+                if result.returncode != 0:
+                    stderr = result.stderr or ""
+                    match = re.search(r"No such command '([^']+)'", stderr)
+                    if match:
+                        missing = match.group(1)
+                        if missing in skip_names:
+                            raise RuntimeError(f"vpype error: {stderr}")
+                        skip_names.add(missing)
+                        skipped.append(missing)
+                        logger.warning("Skipping unavailable vpype command: %s", missing)
+                        continue
+                    raise RuntimeError(f"vpype error: {stderr}")
+                break
+        elif native_applied:
+            output_path = input_path
 
         original_path = self._original_svg_path
         original_filename = self._current.filename if self._current else "optimized.svg"
 
-        self._optimized_svg_path = tmp.name
-        optimized = self.load(tmp.name)
+        self._optimized_svg_path = output_path
+        optimized = self.load(output_path)
         optimized.filename = original_filename
         self._original_svg_path = original_path
 
@@ -572,7 +597,7 @@ class SVGProcessor:
         }
 
         self._current = optimized
-        return {"before": before_stats, "after": after_stats, "skipped": skipped}
+        return {"before": before_stats, "after": after_stats, "skipped": skipped, "native": native_applied}
 
     def use_optimized(self, use: bool):
         self._use_optimized = use
@@ -585,6 +610,85 @@ class SVGProcessor:
             self._original_svg_path = original_path
         elif not use and self._original_svg_path:
             self.load(self._original_svg_path)
+
+    def _write_current_svg(self, filepath: str) -> None:
+        if not self._current:
+            raise ValueError("No SVG loaded")
+        root = ET.Element(
+            "svg",
+            {
+                "xmlns": "http://www.w3.org/2000/svg",
+                "width": f"{self._current.width_mm}mm",
+                "height": f"{self._current.height_mm}mm",
+                "viewBox": f"0 0 {self._current.width_mm} {self._current.height_mm}",
+            },
+        )
+        for layer in sorted(self._current.layers, key=lambda l: l.order):
+            group = ET.SubElement(root, "g", {"id": str(layer.name)})
+            for seg in layer.paths:
+                if len(seg.points) < 2:
+                    continue
+                points = " ".join(f"{x:.6f},{y:.6f}" for x, y in seg.points)
+                attrs = {
+                    "points": points,
+                    "fill": "none",
+                    "stroke": seg.color or layer.color or "#000000",
+                    "stroke-width": str(seg.stroke_width or 1.0),
+                }
+                if seg.path_id:
+                    attrs["id"] = str(seg.path_id)
+                ET.SubElement(group, "polyline", attrs)
+        ET.ElementTree(root).write(filepath, encoding="utf-8", xml_declaration=True)
+
+    def deduplicate_paths(self, tolerance_mm: float = 0.1, push_undo: bool = True) -> int:
+        if not self._current:
+            return 0
+        tol = max(float(tolerance_mm or 0.1), 1e-6)
+        if push_undo:
+            self._push_undo()
+        seen: set[tuple] = set()
+        removed = 0
+        for layer in self._current.layers:
+            kept: list[PathSegment] = []
+            for seg in layer.paths:
+                key = self._path_dedup_key(seg.points, tol)
+                if key in seen:
+                    removed += 1
+                    continue
+                seen.add(key)
+                kept.append(seg)
+            layer.paths = kept
+        if removed:
+            self._recompute_bounds()
+        return removed
+
+    def reloop_paths(self, tolerance_mm: float = 0.1, push_undo: bool = True) -> int:
+        if not self._current:
+            return 0
+        tol = max(float(tolerance_mm or 0.1), 1e-6)
+        if push_undo:
+            self._push_undo()
+        changed = 0
+        for layer in self._current.layers:
+            for seg in layer.paths:
+                pts = list(seg.points)
+                if len(pts) < 4 or self._point_dist(pts[0], pts[-1]) > tol:
+                    continue
+                core = pts[:-1]
+                start_idx = min(range(len(core)), key=lambda i: (core[i][0] * core[i][0] + core[i][1] * core[i][1], core[i][1], core[i][0]))
+                if start_idx == 0:
+                    continue
+                relooped = core[start_idx:] + core[:start_idx]
+                relooped.append(relooped[0])
+                seg.points = relooped
+                changed += 1
+        return changed
+
+    @staticmethod
+    def _path_dedup_key(points: list[tuple[float, float]], tolerance_mm: float) -> tuple:
+        quantized = tuple((round(x / tolerance_mm), round(y / tolerance_mm)) for x, y in points)
+        reversed_key = tuple(reversed(quantized))
+        return min(quantized, reversed_key)
 
     # ---- undo stack ----
 
