@@ -1838,6 +1838,11 @@ async function runVpype() {
     document.getElementById('vpype-stats').textContent =
       `Before: ${s.before.paths}p / ${s.before.distance_mm}mm → After: ${s.after.paths}p / ${s.after.distance_mm}mm`;
     toast('vpype complete','success');
+    if (s.skipped && s.skipped.length) {
+      const skipped = s.skipped.join(', ');
+      document.getElementById('vpype-stats').textContent += ` (skipped: ${skipped})`;
+      toast(`vpype skipped unavailable command(s): ${skipped}`, 'info');
+    }
   }
 }
 

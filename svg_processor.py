@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import os
+import re
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
@@ -465,79 +466,97 @@ class SVGProcessor:
             "distance_mm": round(self._current.total_distance(), 1) if self._current else 0,
         }
 
-        cmd = ["vpype", "read", self._original_svg_path]
-
-        for op in operations:
-            name = op.get("name", "")
-            if name == "linemerge":
-                tol = op.get("tolerance", 0.5)
-                cmd += ["linemerge", "--tolerance", str(tol)]
-            elif name == "linesort":
-                cmd += ["linesort"]
-            elif name == "filter":
-                min_len = op.get("min_length", 1.0)
-                cmd += ["filter", "--min-length", f"{min_len}mm"]
-            elif name == "splitall":
-                cmd += ["splitall"]
-            elif name == "deduplicate":
-                tol = op.get("tolerance", 0.1)
-                cmd += ["deduplicate", "--tolerance", str(tol)]
-            elif name == "reloop":
-                cmd += ["reloop"]
-            elif name == "occult":
-                occult_cmd = ["occult"]
-                if op.get("keep"):
-                    occult_cmd.append("-k")
-                if op.get("ignore_layers"):
-                    occult_cmd.append("-i")
-                if op.get("across_layers"):
-                    occult_cmd.append("-a")
-                cmd += occult_cmd
-            elif name == "perspective":
-                spread = op.get("spread")
-                if spread:
-                    cmd += ["pspread", f"{float(spread)}mm"]
-                rotate_axis = op.get("rotate_axis")
-                rotate_deg = op.get("rotate_deg")
-                if rotate_axis and rotate_deg not in (None, ""):
-                    cmd += ["protate", str(rotate_axis), str(float(rotate_deg))]
-                scale_x = op.get("scale_x")
-                scale_y = op.get("scale_y")
-                if scale_x not in (None, "") or scale_y not in (None, ""):
-                    cmd += ["pscale", str(float(scale_x or 1.0)), str(float(scale_y or 1.0)), "1"]
-                pan = float(op.get("pan", 0) or 0)
-                tilt = float(op.get("tilt", 0) or 0)
-                hfov = float(op.get("hfov", 60) or 60)
-                persp_cmd = ["perspective", "--hfov", str(hfov)]
-                if abs(pan) > 1e-9:
-                    persp_cmd += ["--pan", str(pan)]
-                if abs(tilt) > 1e-9:
-                    persp_cmd += ["--tilt", str(tilt)]
-                cmd += persp_cmd
-            elif name == "scaleto":
-                w = op.get("width")
-                h = op.get("height")
-                if w is None or h is None:
-                    if self._config is not None:
-                        try:
-                            w = float(self._config.get("bed_width_mm", 300) or 300)
-                            h = float(self._config.get("bed_height_mm", 218) or 218)
-                        except (TypeError, ValueError):
-                            w, h = 300, 218
-                    else:
-                        w, h = 300, 218
-                cmd += ["scaleto", f"{w}mm", f"{h}mm"]
-
         tmp = tempfile.NamedTemporaryFile(suffix=".svg", delete=False)
         tmp.close()
-        cmd += ["write", tmp.name]
+        skipped: list[str] = []
 
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        def build_cmd(skip_names: set[str]) -> list[str]:
+            cmd = ["vpype", "read", self._original_svg_path]
+
+            for op in operations:
+                name = op.get("name", "")
+                if not name or name in skip_names:
+                    continue
+                if name == "linemerge":
+                    tol = op.get("tolerance", 0.5)
+                    cmd += ["linemerge", "--tolerance", str(tol)]
+                elif name == "linesort":
+                    cmd += ["linesort"]
+                elif name == "filter":
+                    min_len = op.get("min_length", 1.0)
+                    cmd += ["filter", "--min-length", f"{min_len}mm"]
+                elif name == "splitall":
+                    cmd += ["splitall"]
+                elif name == "deduplicate":
+                    tol = op.get("tolerance", 0.1)
+                    cmd += ["deduplicate", "--tolerance", str(tol)]
+                elif name == "reloop":
+                    cmd += ["reloop"]
+                elif name == "occult":
+                    occult_cmd = ["occult"]
+                    if op.get("keep"):
+                        occult_cmd.append("-k")
+                    if op.get("ignore_layers"):
+                        occult_cmd.append("-i")
+                    if op.get("across_layers"):
+                        occult_cmd.append("-a")
+                    cmd += occult_cmd
+                elif name == "perspective":
+                    spread = op.get("spread")
+                    if spread:
+                        cmd += ["pspread", f"{float(spread)}mm"]
+                    rotate_axis = op.get("rotate_axis")
+                    rotate_deg = op.get("rotate_deg")
+                    if rotate_axis and rotate_deg not in (None, ""):
+                        cmd += ["protate", str(rotate_axis), str(float(rotate_deg))]
+                    scale_x = op.get("scale_x")
+                    scale_y = op.get("scale_y")
+                    if scale_x not in (None, "") or scale_y not in (None, ""):
+                        cmd += ["pscale", str(float(scale_x or 1.0)), str(float(scale_y or 1.0)), "1"]
+                    pan = float(op.get("pan", 0) or 0)
+                    tilt = float(op.get("tilt", 0) or 0)
+                    hfov = float(op.get("hfov", 60) or 60)
+                    persp_cmd = ["perspective", "--hfov", str(hfov)]
+                    if abs(pan) > 1e-9:
+                        persp_cmd += ["--pan", str(pan)]
+                    if abs(tilt) > 1e-9:
+                        persp_cmd += ["--tilt", str(tilt)]
+                    cmd += persp_cmd
+                elif name == "scaleto":
+                    w = op.get("width")
+                    h = op.get("height")
+                    if w is None or h is None:
+                        if self._config is not None:
+                            try:
+                                w = float(self._config.get("bed_width_mm", 300) or 300)
+                                h = float(self._config.get("bed_height_mm", 218) or 218)
+                            except (TypeError, ValueError):
+                                w, h = 300, 218
+                        else:
+                            w, h = 300, 218
+                    cmd += ["scaleto", f"{w}mm", f"{h}mm"]
+            cmd += ["write", tmp.name]
+            return cmd
+
+        skip_names: set[str] = set()
+        while True:
+            try:
+                result = subprocess.run(build_cmd(skip_names), capture_output=True, text=True, timeout=60)
+            except FileNotFoundError:
+                raise RuntimeError("vpype not installed or not in PATH")
             if result.returncode != 0:
-                raise RuntimeError(f"vpype error: {result.stderr}")
-        except FileNotFoundError:
-            raise RuntimeError("vpype not installed or not in PATH")
+                stderr = result.stderr or ""
+                match = re.search(r"No such command '([^']+)'", stderr)
+                if match:
+                    missing = match.group(1)
+                    if missing in skip_names:
+                        raise RuntimeError(f"vpype error: {stderr}")
+                    skip_names.add(missing)
+                    skipped.append(missing)
+                    logger.warning("Skipping unavailable vpype command: %s", missing)
+                    continue
+                raise RuntimeError(f"vpype error: {stderr}")
+            break
 
         original_path = self._original_svg_path
         original_filename = self._current.filename if self._current else "optimized.svg"
@@ -553,7 +572,7 @@ class SVGProcessor:
         }
 
         self._current = optimized
-        return {"before": before_stats, "after": after_stats}
+        return {"before": before_stats, "after": after_stats, "skipped": skipped}
 
     def use_optimized(self, use: bool):
         self._use_optimized = use
